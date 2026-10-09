@@ -118,6 +118,14 @@ components:
         - $ref: '#/components/schemas/WorkspaceFolders'
         # Diagnostics
         - $ref: '#/components/schemas/AgentDiagnostics'
+        # Projects + tasks (cmpAgent)
+        - $ref: '#/components/schemas/ProjectsLoaded'
+        - $ref: '#/components/schemas/TasksLoaded'
+        - $ref: '#/components/schemas/PermissionAsked'
+        - $ref: '#/components/schemas/PermissionResolved'
+        - $ref: '#/components/schemas/ActionError'
+        - $ref: '#/components/schemas/AgentDefaultsLoaded'
+        - $ref: '#/components/schemas/AgentChat'
       discriminator: type
 
     ClientMessage:
@@ -144,6 +152,16 @@ components:
         - $ref: '#/components/schemas/SaveAreaMappings'
         - $ref: '#/components/schemas/SetShowAreas'
         - $ref: '#/components/schemas/RequestDiagnostics'
+        - $ref: '#/components/schemas/SaveProject'
+        - $ref: '#/components/schemas/DeleteProject'
+        - $ref: '#/components/schemas/StartTask'
+        - $ref: '#/components/schemas/StopTask'
+        - $ref: '#/components/schemas/AnswerPermission'
+        - $ref: '#/components/schemas/SaveAgentDefaults'
+        - $ref: '#/components/schemas/WatchAgentChat'
+        - $ref: '#/components/schemas/UnwatchAgentChat'
+        - $ref: '#/components/schemas/SendAgentMessage'
+        - $ref: '#/components/schemas/InterruptAgent'
       discriminator: type
 
     # ── Server message variants ────────────────────────────────────
@@ -1065,6 +1083,365 @@ components:
           const: requestDiagnostics
 
     # ── Supporting schemas ─────────────────────────────────────────
+
+    # ── Projects + tasks (cmpAgent) ─────────────────────────────────
+
+    ProjectsLoaded:
+      description: Saved projects in the Project Room (~/.pixel-agents/projects/).
+      type: object
+      additionalProperties: false
+      required: [type, projects]
+      properties:
+        type:
+          const: projectsLoaded
+        projects:
+          type: array
+          items:
+            $ref: '#/components/schemas/Project'
+
+    TasksLoaded:
+      description: Every task the server knows about, newest first.
+      type: object
+      additionalProperties: false
+      required: [type, tasks]
+      properties:
+        type:
+          const: tasksLoaded
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/Task'
+
+    PermissionAsked:
+      description: A task's agent wants to run a tool that needs approval.
+      type: object
+      additionalProperties: false
+      required: [type, requestId, taskId, taskTitle, toolName, detail]
+      properties:
+        type:
+          const: permissionAsked
+        requestId:
+          type: string
+        taskId:
+          type: string
+        taskTitle:
+          type: string
+        toolName:
+          type: string
+        detail:
+          type: string
+          description: Tool input rendered for a human (command, path, ...).
+        agentId:
+          type: integer
+          description: The office agent asking, when known. Its chat shows the request.
+        questions:
+          type: array
+          description: Present when the agent asks the user to choose (AskUserQuestion).
+          items:
+            $ref: '#/components/schemas/AgentQuestion'
+
+    PermissionResolved:
+      description: A permission request was answered or abandoned.
+      type: object
+      additionalProperties: false
+      required: [type, requestId]
+      properties:
+        type:
+          const: permissionResolved
+        requestId:
+          type: string
+
+    ActionError:
+      description: A project/task request failed; shown to the user.
+      type: object
+      additionalProperties: false
+      required: [type, message]
+      properties:
+        type:
+          const: actionError
+        message:
+          type: string
+
+    SaveProject:
+      description: Create (empty id) or update a project. Privileged.
+      type: object
+      additionalProperties: false
+      required: [type, project]
+      properties:
+        type:
+          const: saveProject
+        project:
+          $ref: '#/components/schemas/Project'
+
+    DeleteProject:
+      description: Delete a project's record (never its repo). Privileged.
+      type: object
+      additionalProperties: false
+      required: [type, id]
+      properties:
+        type:
+          const: deleteProject
+        id:
+          type: string
+
+    StartTask:
+      description: Start an agent on a task in a fresh worktree of the project. Privileged.
+      type: object
+      additionalProperties: false
+      required: [type, projectId, title, prompt]
+      properties:
+        type:
+          const: startTask
+        projectId:
+          type: string
+        title:
+          type: string
+        prompt:
+          type: string
+        agent:
+          $ref: '#/components/schemas/AgentSettings'
+
+    StopTask:
+      description: Abort a running task's agent. Privileged.
+      type: object
+      additionalProperties: false
+      required: [type, taskId]
+      properties:
+        type:
+          const: stopTask
+        taskId:
+          type: string
+
+    AnswerPermission:
+      description: Approve or deny a pending permission request. Privileged.
+      type: object
+      additionalProperties: false
+      required: [type, requestId, allow]
+      properties:
+        type:
+          const: answerPermission
+        requestId:
+          type: string
+        allow:
+          type: boolean
+        message:
+          type: string
+          description: Why it was rejected; passed to the agent.
+        answers:
+          type: object
+          description: 'Answers to questions: question text -> chosen label(s), comma-separated.'
+          additionalProperties:
+            type: string
+
+    Project:
+      type: object
+      additionalProperties: false
+      required: [id, name, repoPath, defaultBranch]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        repoPath:
+          type: string
+        defaultBranch:
+          type: string
+        setupCommand:
+          type: string
+          description: Run in each new worktree before the agent starts (e.g. npm ci).
+        testCommand:
+          type: string
+          description: How to verify changes; given to the agent.
+        dir:
+          type: string
+          description: Server-filled. The project's folder holding docs/ and memory/.
+        agent:
+          $ref: '#/components/schemas/AgentSettings'
+
+    AgentQuestion:
+      type: object
+      additionalProperties: false
+      required: [question, header, multiSelect, options]
+      properties:
+        question:
+          type: string
+        header:
+          type: string
+        multiSelect:
+          type: boolean
+        options:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentQuestionOption'
+
+    AgentQuestionOption:
+      type: object
+      additionalProperties: false
+      required: [label, description]
+      properties:
+        label:
+          type: string
+        description:
+          type: string
+        preview:
+          type: string
+
+    AgentSettings:
+      description: Model and reasoning settings. Empty fields inherit (defaults -> project -> task).
+      type: object
+      additionalProperties: false
+      properties:
+        model:
+          type: string
+          description: Alias (opus, sonnet, haiku, fable) or full model id.
+        effort:
+          $ref: '#/components/schemas/EffortLevel'
+        thinking:
+          $ref: '#/components/schemas/ThinkingMode'
+
+    EffortLevel:
+      type: string
+      enum: [low, medium, high, xhigh, max]
+
+    ThinkingMode:
+      type: string
+      enum: [adaptive, disabled]
+
+    ChatEntryKind:
+      type: string
+      enum: [user, assistant, thinking, tool, toolResult]
+
+    ChatEntry:
+      type: object
+      additionalProperties: false
+      required: [kind, text]
+      properties:
+        kind:
+          $ref: '#/components/schemas/ChatEntryKind'
+        text:
+          type: string
+        toolName:
+          type: string
+        ts:
+          type: string
+
+    AgentDefaultsLoaded:
+      description: Global agent settings every task starts from.
+      type: object
+      additionalProperties: false
+      required: [type, defaults]
+      properties:
+        type:
+          const: agentDefaultsLoaded
+        defaults:
+          $ref: '#/components/schemas/AgentSettings'
+
+    AgentChat:
+      description: Conversation entries for a watched agent; reset=true replaces, false appends.
+      type: object
+      additionalProperties: false
+      required: [type, id, entries, reset, controllable]
+      properties:
+        type:
+          const: agentChat
+        id:
+          type: integer
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatEntry'
+        reset:
+          type: boolean
+        controllable:
+          type: boolean
+          description: True for task agents this server runs (messages + interrupt allowed).
+
+    SaveAgentDefaults:
+      description: Replace the global agent settings. Privileged.
+      type: object
+      additionalProperties: false
+      required: [type, defaults]
+      properties:
+        type:
+          const: saveAgentDefaults
+        defaults:
+          $ref: '#/components/schemas/AgentSettings'
+
+    WatchAgentChat:
+      description: Start streaming an agent's conversation to this client. Privileged.
+      type: object
+      additionalProperties: false
+      required: [type, id]
+      properties:
+        type:
+          const: watchAgentChat
+        id:
+          type: integer
+
+    UnwatchAgentChat:
+      type: object
+      additionalProperties: false
+      required: [type, id]
+      properties:
+        type:
+          const: unwatchAgentChat
+        id:
+          type: integer
+
+    SendAgentMessage:
+      description: Send a follow-up message to a task agent. Privileged.
+      type: object
+      additionalProperties: false
+      required: [type, id, text]
+      properties:
+        type:
+          const: sendAgentMessage
+        id:
+          type: integer
+        text:
+          type: string
+
+    InterruptAgent:
+      description: Stop a task agent's current turn; the session stays open. Privileged.
+      type: object
+      additionalProperties: false
+      required: [type, id]
+      properties:
+        type:
+          const: interruptAgent
+        id:
+          type: integer
+
+    TaskStatus:
+      type: string
+      enum: [preparing, running, done, failed, stopped]
+
+    Task:
+      type: object
+      additionalProperties: false
+      required: [id, projectId, title, status, createdAt]
+      properties:
+        id:
+          type: string
+        projectId:
+          type: string
+        title:
+          type: string
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        branch:
+          type: string
+        worktree:
+          type: string
+        error:
+          type: string
+        createdAt:
+          type: number
+        agent:
+          $ref: '#/components/schemas/AgentSettings'
+        sessionOpen:
+          type: boolean
+          description: The agent process is alive and accepts follow-up messages.
 
     AgentSeatMeta:
       description: |

@@ -1,14 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { toMajorMinor } from './changelogData.js';
+import { AgentChatModal } from './components/AgentChatModal.js';
 import { BottomToolbar } from './components/BottomToolbar.js';
 import { ChangelogModal } from './components/ChangelogModal.js';
 import { ConnectionIndicator } from './components/ConnectionIndicator.js';
 import { DebugView } from './components/DebugView.js';
 import { EditActionBar } from './components/EditActionBar.js';
+import { ErrorToast } from './components/ErrorToast.js';
 import { IntroBubble } from './components/IntroBubble.js';
 import { MigrationNotice } from './components/MigrationNotice.js';
+import { ProjectRoomModal } from './components/ProjectRoomModal.js';
 import { SettingsModal } from './components/SettingsModal.js';
+import { TasksModal } from './components/TasksModal.js';
 import { Tooltip } from './components/Tooltip.js';
 import { Modal } from './components/ui/Modal.js';
 import { VersionIndicator } from './components/VersionIndicator.js';
@@ -17,6 +21,7 @@ import { useEditorActions } from './hooks/useEditorActions.js';
 import { useEditorKeyboard } from './hooks/useEditorKeyboard.js';
 import { useExtensionMessages } from './hooks/useExtensionMessages.js';
 import { useIntroTour } from './hooks/useIntroTour.js';
+import { useTasks } from './hooks/useTasks.js';
 import { OfficeCanvas } from './office/components/OfficeCanvas.js';
 import { ToolOverlay } from './office/components/ToolOverlay.js';
 import { EditorState } from './office/editor/editorState.js';
@@ -60,6 +65,11 @@ function App() {
   }, []);
 
   const editor = useEditorActions(getOfficeState, editorState);
+  // Before useExtensionMessages: its effect sends webviewReady, whose replies this listens for.
+  const taskState = useTasks();
+  const [isTasksOpen, setIsTasksOpen] = useState(false);
+  const [isProjectsOpen, setIsProjectsOpen] = useState(false);
+  const [chatAgentId, setChatAgentId] = useState<number | null>(null);
 
   const isEditDirty = useCallback(
     () => editor.isEditMode && editor.isDirty,
@@ -238,6 +248,8 @@ function App() {
     const meta = os.subagentMeta.get(agentId);
     const focusId = meta ? meta.parentAgentId : agentId;
     transport.send({ type: 'focusAgent', id: focusId });
+    // Standalone has no terminal to focus: the chat is where you follow and steer the agent.
+    if (isBrowserRuntime) setChatAgentId(focusId);
   }, []);
 
   const officeState = getOfficeState();
@@ -518,7 +530,40 @@ function App() {
         isSettingsOpen={isSettingsOpen}
         onToggleSettings={() => setIsSettingsOpen((v) => !v)}
         workspaceFolders={workspaceFolders}
+        onOpenTasks={() => setIsTasksOpen(true)}
+        onOpenProjects={() => setIsProjectsOpen(true)}
       />
+
+      <TasksModal
+        isOpen={isTasksOpen}
+        onClose={() => setIsTasksOpen(false)}
+        projects={taskState.projects}
+        tasks={taskState.tasks}
+        onOpenProjects={() => {
+          setIsTasksOpen(false);
+          setIsProjectsOpen(true);
+        }}
+      />
+
+      <ProjectRoomModal
+        isOpen={isProjectsOpen}
+        onClose={() => setIsProjectsOpen(false)}
+        projects={taskState.projects}
+        agentDefaults={taskState.agentDefaults}
+      />
+
+      <AgentChatModal
+        agentId={chatAgentId}
+        title={
+          chatAgentId === null
+            ? ''
+            : `${getOfficeState().characters.get(chatAgentId)?.folderName ?? 'Agent'} #${chatAgentId}`
+        }
+        onClose={() => setChatAgentId(null)}
+        requests={taskState.permissions.filter((p) => p.agentId === chatAgentId)}
+      />
+
+      <ErrorToast error={taskState.error} onDismiss={taskState.clearError} />
 
       <VersionIndicator
         currentVersion={extensionVersion}
@@ -593,6 +638,9 @@ function App() {
           onClose={handleIntroClose}
           escapeSuppressed={
             isSettingsOpen ||
+            isTasksOpen ||
+            isProjectsOpen ||
+            chatAgentId !== null ||
             isChangelogOpen ||
             isHooksInfoOpen ||
             showMigrationNotice ||

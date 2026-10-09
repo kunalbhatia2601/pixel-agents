@@ -38,7 +38,14 @@ export type ServerMessage =
   | ExternalAssetDirectoriesUpdated
   | AreaMappingsLoaded
   | WorkspaceFolders
-  | AgentDiagnostics;
+  | AgentDiagnostics
+  | ProjectsLoaded
+  | TasksLoaded
+  | PermissionAsked
+  | PermissionResolved
+  | ActionError
+  | AgentDefaultsLoaded
+  | AgentChat;
 
 export type ClientMessage =
   | WebviewReady
@@ -62,7 +69,17 @@ export type ClientMessage =
   | RemoveExternalAssetDirectory
   | SaveAreaMappings
   | SetShowAreas
-  | RequestDiagnostics;
+  | RequestDiagnostics
+  | SaveProject
+  | DeleteProject
+  | StartTask
+  | StopTask
+  | AnswerPermission
+  | SaveAgentDefaults
+  | WatchAgentChat
+  | UnwatchAgentChat
+  | SendAgentMessage
+  | InterruptAgent;
 
 export interface ProviderCapabilities {
   type: 'providerCapabilities';
@@ -315,6 +332,108 @@ export interface AgentDiagnostics {
   agents: Record<string, any>[];
 }
 
+export interface ProjectsLoaded {
+  type: 'projectsLoaded';
+  projects: Project[];
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  repoPath: string;
+  defaultBranch: string;
+  setupCommand?: string;
+  testCommand?: string;
+  dir?: string;
+  agent?: AgentSettings;
+}
+
+export interface AgentSettings {
+  model?: string;
+  effort?: EffortLevel;
+  thinking?: ThinkingMode;
+}
+
+export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+export type ThinkingMode = 'adaptive' | 'disabled';
+
+export interface TasksLoaded {
+  type: 'tasksLoaded';
+  tasks: Task[];
+}
+
+export interface Task {
+  id: string;
+  projectId: string;
+  title: string;
+  status: TaskStatus;
+  branch?: string;
+  worktree?: string;
+  error?: string;
+  createdAt: number;
+  agent?: AgentSettings;
+  sessionOpen?: boolean;
+}
+
+export type TaskStatus = 'preparing' | 'running' | 'done' | 'failed' | 'stopped';
+
+export interface PermissionAsked {
+  type: 'permissionAsked';
+  requestId: string;
+  taskId: string;
+  taskTitle: string;
+  toolName: string;
+  detail: string;
+  agentId?: number;
+  questions?: AgentQuestion[];
+}
+
+export interface AgentQuestion {
+  question: string;
+  header: string;
+  multiSelect: boolean;
+  options: AgentQuestionOption[];
+}
+
+export interface AgentQuestionOption {
+  label: string;
+  description: string;
+  preview?: string;
+}
+
+export interface PermissionResolved {
+  type: 'permissionResolved';
+  requestId: string;
+}
+
+export interface ActionError {
+  type: 'actionError';
+  message: string;
+}
+
+export interface AgentDefaultsLoaded {
+  type: 'agentDefaultsLoaded';
+  defaults: AgentSettings;
+}
+
+export interface AgentChat {
+  type: 'agentChat';
+  id: number;
+  entries: ChatEntry[];
+  reset: boolean;
+  controllable: boolean;
+}
+
+export interface ChatEntry {
+  kind: ChatEntryKind;
+  text: string;
+  toolName?: string;
+  ts?: string;
+}
+
+export type ChatEntryKind = 'user' | 'assistant' | 'thinking' | 'tool' | 'toolResult';
+
 export interface WebviewReady {
   type: 'webviewReady';
 }
@@ -428,4 +547,61 @@ export interface SetShowAreas {
 
 export interface RequestDiagnostics {
   type: 'requestDiagnostics';
+}
+
+export interface SaveProject {
+  type: 'saveProject';
+  project: Project;
+}
+
+export interface DeleteProject {
+  type: 'deleteProject';
+  id: string;
+}
+
+export interface StartTask {
+  type: 'startTask';
+  projectId: string;
+  title: string;
+  prompt: string;
+  agent?: AgentSettings;
+}
+
+export interface StopTask {
+  type: 'stopTask';
+  taskId: string;
+}
+
+export interface AnswerPermission {
+  type: 'answerPermission';
+  requestId: string;
+  allow: boolean;
+  message?: string;
+  answers?: Record<string, string>;
+}
+
+export interface SaveAgentDefaults {
+  type: 'saveAgentDefaults';
+  defaults: AgentSettings;
+}
+
+export interface WatchAgentChat {
+  type: 'watchAgentChat';
+  id: number;
+}
+
+export interface UnwatchAgentChat {
+  type: 'unwatchAgentChat';
+  id: number;
+}
+
+export interface SendAgentMessage {
+  type: 'sendAgentMessage';
+  id: number;
+  text: string;
+}
+
+export interface InterruptAgent {
+  type: 'interruptAgent';
+  id: number;
 }

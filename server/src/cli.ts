@@ -27,8 +27,10 @@ import {
 } from './configPersistence.js';
 import { MAX_PORT, MIN_PORT } from './constants.js';
 import { FileStateAdapter } from './fileStateAdapter.js';
+import { setFolderNameResolver } from './fileWatcher.js';
 import { claudeProvider, copyHookScript, hookProviderById } from './providers/index.js';
 import { PixelAgentsServer } from './server.js';
+import { TaskRunner } from './taskRunner.js';
 
 // ── Argument parsing ──────────────────────────────────────────
 
@@ -144,6 +146,9 @@ async function main(): Promise<void> {
   try {
     // Create runtime first (before server.start, so we can pass it in)
     const runtime = new AgentRuntime(store, claudeProvider);
+    const tasks = new TaskRunner(store, runtime);
+    // Agents in task worktrees are labelled with their project's name (keys Areas, too).
+    setFolderNameResolver((ctx) => tasks.projectNameFor(ctx));
 
     // Wire hook events: HTTP POST -> runtime -> hookEventHandler -> agents
     server.onHookEvent((providerId, event) => {
@@ -237,6 +242,7 @@ async function main(): Promise<void> {
       assetCache,
       onSetHooksEnabled,
       onReloadAssets,
+      tasks,
     });
     currentConfig = { port: config.port, token: config.token };
 

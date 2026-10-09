@@ -5,6 +5,7 @@ import * as crypto from 'crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import Fastify from 'fastify';
 
+import type { ChatTail } from './agentChat.js';
 import type { AgentRuntime } from './agentRuntime.js';
 import type { AgentStateStore } from './agentStateStore.js';
 import type {
@@ -19,6 +20,7 @@ import {
   WS_CLOSE_FORBIDDEN_ORIGIN,
   WS_CLOSE_UNAUTHORIZED,
 } from './constants.js';
+import type { TaskRunner } from './taskRunner.js';
 import type { AgentState } from './types.js';
 
 /** Options for creating the HTTP + WebSocket server. */
@@ -45,6 +47,8 @@ export interface HttpServerOptions {
   onSetHooksEnabled?: SetHooksEnabledSideEffect;
   /** Invoked when an external asset directory is added/removed. Standalone reloads + re-broadcasts assets here. */
   onReloadAssets?: ReloadAssetsSideEffect;
+  /** Project/task runner (standalone only). */
+  tasks?: TaskRunner;
 }
 
 /** Result of createHttpServer(). */
@@ -167,6 +171,8 @@ function registerWebSocketRoute(app: FastifyInstance, options: HttpServerOptions
     const privileged = options.embedded || standaloneTokenValid(request.url, options.token);
 
     const { store } = options;
+    /** Agent chats this client has open, keyed by agent id. */
+    const chatTails = new Map<number, ChatTail>();
 
     // Pipe store events to WebSocket client
     const onAgentAdded = (id: number, agent: AgentState) => {
@@ -211,6 +217,8 @@ function registerWebSocketRoute(app: FastifyInstance, options: HttpServerOptions
           onSetHooksEnabled: options.onSetHooksEnabled,
           onReloadAssets: options.onReloadAssets,
           privileged,
+          tasks: options.tasks,
+          chatTails,
         });
       } catch {
         // Malformed JSON, ignore
@@ -218,6 +226,7 @@ function registerWebSocketRoute(app: FastifyInstance, options: HttpServerOptions
     });
 
     socket.on('close', () => {
+      for (const tail of chatTails.values()) tail.dispose();
       store.off('agentAdded', onAgentAdded);
       store.off('agentRemoved', onAgentRemoved);
       store.off('broadcast', onBroadcast);

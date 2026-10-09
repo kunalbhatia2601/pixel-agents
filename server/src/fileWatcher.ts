@@ -1461,6 +1461,7 @@ export function scanExternalDir(
       waitingTimers,
       permissionTimers,
       persistAgents,
+      folderNameResolver?.({ projectDir }),
     );
   }
 }

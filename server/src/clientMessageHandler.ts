@@ -1,5 +1,7 @@
+import type { AgentSettings, Project } from '../../core/src/messages.js';
 import type { HookProvider } from '../../core/src/provider.js';
 import { resendAgentActivity } from './agentActivityResend.js';
+import { ChatTail } from './agentChat.js';
 import { buildAgentDiagnostics } from './agentDiagnostics.js';
 import type { AgentRuntime } from './agentRuntime.js';
 import type { AgentStateStore } from './agentStateStore.js';
@@ -12,11 +14,19 @@ import {
   writeConfig,
 } from './configPersistence.js';
 import { HUE_SHIFT_MAX_DEG, PALETTE_COUNT } from './constants.js';
-import { readLayoutFromFile, writeLayoutToFile } from './layoutPersistence.js';
+import { loadLayout, writeLayoutToFile } from './layoutPersistence.js';
+import {
+  deleteProject,
+  getAgentDefaults,
+  listProjects,
+  saveAgentDefaults,
+  saveProject,
+} from './projects.js';
 import type { ConsentEffects } from './providers/hook/consentExecutor.js';
 import { applyConsentChoice } from './providers/hook/consentExecutor.js';
 import { hooksConsentRequest } from './providers/hook/consentGate.js';
 import { claudeProvider, hookProviderById, hookProviders } from './providers/index.js';
+import type { TaskRunner } from './taskRunner.js';
 
 type WsSend = (message: Record<string, unknown>) => void;
 
@@ -60,6 +70,10 @@ export interface ClientMessageContext {
    * to false so a caller that forgets to pass it gets the safe answer.
    */
   privileged?: boolean;
+  /** Project/task runner (standalone only). Every task message is privileged: it runs code on this machine. */
+  tasks?: TaskRunner;
+  /** This connection's open agent chats; the transport disposes them on disconnect. */
+  chatTails?: Map<number, ChatTail>;
 }
 
 // ── Setting key constants (mirror adapters/vscode/constants.ts) ──
@@ -70,6 +84,8 @@ const KEY_GHOST_HEADLESS_AGENTS = 'pixel-agents.ghostHeadlessAgents';
 const KEY_WATCH_ALL_SESSIONS = 'pixel-agents.watchAllSessions';
 const KEY_HOOKS_INFO_SHOWN = 'pixel-agents.hooksInfoShown';
 const KEY_SHOW_AREAS = 'pixel-agents.showAreas';
+/** Area label in the bundled default layout where project agents sit. */
+const DEV_TEAM_AREA = 'Dev Team';
 
 /**
  * Handle incoming ClientMessage from a WebSocket client.
@@ -270,6 +286,19 @@ export function handleClientMessage(
       break;
     }
 
+    case 'saveProject':
+    case 'deleteProject':
+    case 'startTask':
+    case 'stopTask':
+    case 'answerPermission':
+    case 'saveAgentDefaults':
+    case 'watchAgentChat':
+    case 'unwatchAgentChat':
+    case 'sendAgentMessage':
+    case 'interruptAgent':
+      handleTaskMessage(msg, send, ctx);
+      break;
+
     default:
       // focusAgent, exportLayout, importLayout
       // require IDE-specific handling (not yet implemented for standalone)
@@ -355,6 +384,118 @@ function standaloneConsentEffects(
   };
 }
 
+/** Untrusted client input → a plain string map, or undefined. */
+function stringRecord(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  return Object.fromEntries(
+    Object.entries(value).filter((e): e is [string, string] => typeof e[1] === 'string'),
+  );
+}
+
+function taskIdForAgent(ctx: ClientMessageContext, agentId: number): string {
+  const sessionId = ctx.store.get(agentId)?.sessionId;
+  const taskId = sessionId ? ctx.tasks?.taskIdForSession(sessionId) : undefined;
+  if (!taskId) throw new Error('Only agents started as tasks can be messaged or interrupted');
+  return taskId;
+}
+
+function handleTaskMessage(
+  msg: Record<string, unknown>,
+  send: WsSend,
+  ctx: ClientMessageContext,
+): void {
+  const { tasks, store } = ctx;
+  if (!tasks || !ctx.privileged) {
+    send({ type: 'actionError', message: 'Not allowed: open the tokened URL the server printed.' });
+    return;
+  }
+  try {
+    switch (msg.type) {
+      case 'saveProject': {
+        const saved = saveProject(msg.project as Project);
+        store.broadcast({ type: 'projectsLoaded', projects: listProjects() });
+        // Agents are labelled with their project name, so this seats them in the dev room
+        // unless the user already mapped the project to other Areas.
+        const cfg = readConfig();
+        const mappings = (cfg.standalone.areaMappings ??= {});
+        if (!mappings[saved.name]) {
+          mappings[saved.name] = [DEV_TEAM_AREA];
+          writeConfig(cfg);
+          store.broadcast({ type: 'areaMappingsLoaded', mappings });
+        }
+        break;
+      }
+      case 'deleteProject':
+        deleteProject(String(msg.id));
+        store.broadcast({ type: 'projectsLoaded', projects: listProjects() });
+        break;
+      case 'startTask':
+        tasks.start(
+          String(msg.projectId),
+          String(msg.title),
+          String(msg.prompt),
+          msg.agent as AgentSettings | undefined,
+        );
+        break;
+      case 'saveAgentDefaults':
+        store.broadcast({
+          type: 'agentDefaultsLoaded',
+          defaults: saveAgentDefaults(msg.defaults as AgentSettings),
+        });
+        break;
+      case 'watchAgentChat': {
+        const id = Number(msg.id);
+        const agent = store.get(id);
+        ctx.chatTails?.get(id)?.dispose();
+        if (!agent?.jsonlFile) {
+          send({ type: 'agentChat', id, entries: [], reset: true, controllable: false });
+          break;
+        }
+        ctx.chatTails?.set(
+          id,
+          new ChatTail(agent.jsonlFile, (entries, reset) =>
+            send({
+              type: 'agentChat',
+              id,
+              entries,
+              reset,
+              controllable: tasks.taskIdForSession(agent.sessionId) !== undefined,
+            }),
+          ),
+        );
+        break;
+      }
+      case 'unwatchAgentChat':
+        ctx.chatTails?.get(Number(msg.id))?.dispose();
+        ctx.chatTails?.delete(Number(msg.id));
+        break;
+      case 'sendAgentMessage':
+        tasks.sendMessage(taskIdForAgent(ctx, Number(msg.id)), String(msg.text));
+        break;
+      case 'interruptAgent':
+        tasks.interrupt(taskIdForAgent(ctx, Number(msg.id))).catch((err: unknown) =>
+          send({
+            type: 'actionError',
+            message: err instanceof Error ? err.message : String(err),
+          }),
+        );
+        break;
+      case 'stopTask':
+        tasks.stop(String(msg.taskId));
+        break;
+      case 'answerPermission':
+        tasks.answerPermission(String(msg.requestId), {
+          allow: msg.allow === true,
+          message: typeof msg.message === 'string' ? msg.message : undefined,
+          answers: stringRecord(msg.answers),
+        });
+        break;
+    }
+  } catch (err) {
+    send({ type: 'actionError', message: err instanceof Error ? err.message : String(err) });
+  }
+}
+
 function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
   const { store, runtime, cache } = ctx;
   const adapter = store.getAdapter();
@@ -423,6 +564,14 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
     externalAssetDirectories: cfg.externalAssetDirectories,
     showAreas,
   });
+
+  // 4b. Project Room, tasks and pending approvals (tokened clients only: paths + commands).
+  if (ctx.tasks && ctx.privileged) {
+    send({ type: 'projectsLoaded', projects: listProjects() });
+    send({ type: 'tasksLoaded', tasks: ctx.tasks.list() });
+    send({ type: 'agentDefaultsLoaded', defaults: getAgentDefaults() });
+    for (const asked of ctx.tasks.pendingPermissions()) send(asked);
+  }
 
   // 4a. Actual install state, distinct from the hooksEnabled preference —
   // hooksEnabled defaults true while first-run consent is still pending. The
@@ -508,8 +657,13 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
 
   // 7. Layout last (see step 3): flushes the webview's buffered existingAgents
   // into characters once seats are rebuilt.
-  const savedLayout = readLayoutFromFile();
-  send({ type: 'layoutLoaded', layout: savedLayout ?? cache?.defaultLayout ?? null });
+  // loadLayout swaps in the bundled default when it carries a newer layoutRevision.
+  const loaded = loadLayout(cache?.defaultLayout);
+  send({
+    type: 'layoutLoaded',
+    layout: loaded?.layout ?? null,
+    wasReset: loaded?.wasReset || undefined,
+  });
 
   // 8. Agent state, AFTER layoutLoaded -- the characters they target only
   // exist once the layout flush creates them. Without this a reconnecting
