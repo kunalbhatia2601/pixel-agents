@@ -381,9 +381,33 @@ export interface Task {
   createdAt: number;
   agent?: AgentSettings;
   sessionOpen?: boolean;
+  sessionId?: string;
+  usage?: UsageTotals;
+  changes?: CodeChanges;
+  changedFiles?: ChangedFile[];
 }
 
 export type TaskStatus = 'preparing' | 'running' | 'done' | 'failed' | 'stopped';
+
+export interface UsageTotals {
+  costUsd?: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
+export interface CodeChanges {
+  files: number;
+  added: number;
+  removed: number;
+}
+
+export interface ChangedFile {
+  path: string;
+  added: number;
+  removed: number;
+}
 
 export interface PermissionAsked {
   type: 'permissionAsked';
@@ -430,6 +454,8 @@ export interface AgentChat {
   entries: ChatEntry[];
   reset: boolean;
   controllable: boolean;
+  taskId?: string;
+  usage?: UsageTotals;
 }
 
 export interface ChatEntry {

@@ -571,6 +571,7 @@ function App() {
         onClose={() => setProjectsView(null)}
         projects={taskState.projects}
         agentDefaults={taskState.agentDefaults}
+        tasks={taskState.tasks}
       />
 
       <AgentChatModal
@@ -582,6 +583,7 @@ function App() {
         }
         onClose={() => setChatAgentId(null)}
         requests={taskState.permissions.filter((p) => p.agentId === chatAgentId)}
+        tasks={taskState.tasks}
       />
 
       <ErrorToast error={taskState.error} onDismiss={taskState.clearError} />

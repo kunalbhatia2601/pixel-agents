@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 
-import type { ChatEntry } from '../../core/src/messages.js';
+import type { ChatEntry, UsageTotals } from '../../core/src/messages.js';
+import { TranscriptUsage } from './usage.js';
 
 const TEXT_MAX_CHARS = 4000;
 const TOOL_MAX_CHARS = 1500;
@@ -21,14 +22,21 @@ function blockText(content: unknown): string {
     .join('\n');
 }
 
+function parseRecord(line: string): Record<string, unknown> | null {
+  try {
+    return JSON.parse(line) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 /** One Claude Code transcript line → the chat entries a human cares about. */
 export function chatEntriesFromLine(line: string): ChatEntry[] {
-  let record: Record<string, unknown>;
-  try {
-    record = JSON.parse(line) as Record<string, unknown>;
-  } catch {
-    return [];
-  }
+  const record = parseRecord(line);
+  return record ? chatEntriesFromRecord(record) : [];
+}
+
+function chatEntriesFromRecord(record: Record<string, unknown>): ChatEntry[] {
   if (record.isMeta) return [];
   const message = record.message as { content?: unknown } | undefined;
   const ts = typeof record.timestamp === 'string' ? record.timestamp : undefined;
@@ -79,12 +87,15 @@ export function chatEntriesFromLine(line: string): ChatEntry[] {
   return entries;
 }
 
-type Send = (entries: ChatEntry[], reset: boolean) => void;
+/** usage is included when the transcript's token totals changed (always on reset). */
+type Send = (entries: ChatEntry[], reset: boolean, usage?: UsageTotals) => void;
 
 /** Tails one transcript for one client: full (capped) history first, then appended lines. */
 export class ChatTail {
   private offset = 0;
   private partial = '';
+  private usage = new TranscriptUsage();
+  private usageChanged = false;
   private timer: ReturnType<typeof setInterval>;
 
   constructor(
@@ -92,15 +103,22 @@ export class ChatTail {
     private send: Send,
   ) {
     const history = this.readNew();
-    this.send(history.slice(-HISTORY_MAX_ENTRIES), true);
+    this.send(history.slice(-HISTORY_MAX_ENTRIES), true, this.takeUsage(true));
     this.timer = setInterval(() => {
       const entries = this.readNew();
-      if (entries.length) this.send(entries, false);
+      const usage = this.takeUsage(false);
+      if (entries.length || usage) this.send(entries, false, usage);
     }, POLL_MS);
   }
 
   dispose(): void {
     clearInterval(this.timer);
+  }
+
+  private takeUsage(force: boolean): UsageTotals | undefined {
+    if (!force && !this.usageChanged) return undefined;
+    this.usageChanged = false;
+    return this.usage.totals();
   }
 
   private readNew(): ChatEntry[] {
@@ -120,6 +138,11 @@ export class ChatTail {
     }
     const lines = chunk.split('\n');
     this.partial = lines.pop() ?? ''; // carry an unterminated line to the next read
-    return lines.flatMap((l) => (l.trim() ? chatEntriesFromLine(l) : []));
+    return lines.flatMap((line) => {
+      const record = line.trim() ? parseRecord(line) : null;
+      if (!record) return [];
+      if (this.usage.add(record)) this.usageChanged = true;
+      return chatEntriesFromRecord(record);
+    });
   }
 }

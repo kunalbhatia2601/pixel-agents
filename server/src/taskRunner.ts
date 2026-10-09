@@ -12,6 +12,7 @@ import type { AgentStateStore } from './agentStateStore.js';
 import { SERVER_JSON_DIR } from './constants.js';
 import { cleanAgentSettings, getAgentDefaults, getProject, listProjectFiles } from './projects.js';
 import { CLAUDE_HOOK_EVENTS } from './providers/hook/claude/constants.js';
+import { parseNumstat, summarizeChanges, usageFromModelUsage } from './usage.js';
 
 const run = promisify(execFile);
 
@@ -128,10 +129,21 @@ export class TaskRunner {
         task.status = 'stopped';
         task.error = 'Server restarted while the task was running';
       }
-      const name = getProject(task.projectId)?.name;
-      if (task.worktree && name) this.rememberWorktree(task.worktree, name);
+      // Sessions never survive a restart.
+      task.sessionOpen = false;
+      const project = getProject(task.projectId);
+      if (task.worktree && project) this.rememberWorktree(task.worktree, project.name);
     }
     this.persist();
+    // Worktrees may have moved on since the last turn (or predate change tracking): recount their diffs.
+    void Promise.all(
+      this.tasks.map((task) => {
+        const project = getProject(task.projectId);
+        return task.worktree && project && fs.existsSync(task.worktree)
+          ? this.refreshChanges(task, project)
+          : undefined;
+      }),
+    ).then(() => this.changed());
   }
 
   list(): Task[] {
@@ -190,6 +202,11 @@ export class TaskRunner {
   }
 
   /** The task whose live session is `sessionId`, if this server runs it. */
+  /** Any task (finished or not) whose agent ran as `sessionId`: its usage and changes. */
+  taskForSession(sessionId: string): Task | undefined {
+    return this.tasks.find((t) => t.sessionId === sessionId);
+  }
+
   taskIdForSession(sessionId: string): string | undefined {
     for (const [taskId, s] of this.sessions) if (s.sessionId === sessionId) return taskId;
     return undefined;
@@ -242,6 +259,7 @@ export class TaskRunner {
       const input = inputQueue();
       input.push(prompt);
       const sessionId = crypto.randomUUID();
+      task.sessionId = sessionId;
       const settings = task.agent ?? {};
       const stream = query({
         prompt: input.messages(),
@@ -293,6 +311,9 @@ export class TaskRunner {
 
       for await (const message of stream) {
         if (message.type !== 'result') continue;
+        // Running session totals: keep the latest, never sum results.
+        task.usage = usageFromModelUsage(message.modelUsage, message.total_cost_usd);
+        await this.refreshChanges(task, project);
         if (message.subtype === 'success') {
           task.status = 'done';
           this.writeMemory(task, project, prompt, message.result);
@@ -319,6 +340,29 @@ export class TaskRunner {
       }
       this.changed();
     }
+  }
+
+  /** Diff of every repo against its merge base with the default branch — what a PR would show. */
+  private async refreshChanges(task: Task, project: Project): Promise<void> {
+    const files = [];
+    for (const repo of project.repos) {
+      const git = (...args: string[]) =>
+        run('git', ['-C', repoWorktree(task, project, repo), ...args]);
+      try {
+        const remote = `origin/${repo.defaultBranch}`;
+        const ref = await git('rev-parse', '--verify', '--quiet', remote).then(
+          () => remote,
+          () => repo.defaultBranch,
+        );
+        const base = (await git('merge-base', 'HEAD', ref)).stdout.trim();
+        // shortcut: untracked files the agent never staged are not counted; they show once committed.
+        const { stdout } = await git('diff', '--numstat', base);
+        files.push(...parseNumstat(stdout, project.repos.length > 1 ? `${repo.name}/` : ''));
+      } catch (err) {
+        console.warn(`[Pixel Agents] Task ${task.id}: diff failed for ${repo.name}`, err);
+      }
+    }
+    Object.assign(task, summarizeChanges(files));
   }
 
   /** One worktree per repo, all on the task's branch. */

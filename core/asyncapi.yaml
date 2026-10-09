@@ -1352,6 +1352,11 @@ components:
         controllable:
           type: boolean
           description: True for task agents this server runs (messages + interrupt allowed).
+        taskId:
+          type: string
+          description: The task this agent ran, if any; its usage and changes are authoritative.
+        usage:
+          $ref: '#/components/schemas/UsageTotals'
 
     PickFolder:
       description: Open the native folder dialog on the server's machine. Privileged.
@@ -1433,6 +1438,48 @@ components:
         id:
           type: integer
 
+    UsageTotals:
+      description: Token and cost totals. costUsd is an estimate; absent when unknown.
+      type: object
+      additionalProperties: false
+      required: [inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens]
+      properties:
+        costUsd:
+          type: number
+        inputTokens:
+          type: number
+        outputTokens:
+          type: number
+        cacheReadTokens:
+          type: number
+        cacheWriteTokens:
+          type: number
+
+    CodeChanges:
+      description: Diff totals against the commit the task started from.
+      type: object
+      additionalProperties: false
+      required: [files, added, removed]
+      properties:
+        files:
+          type: number
+        added:
+          type: number
+        removed:
+          type: number
+
+    ChangedFile:
+      type: object
+      additionalProperties: false
+      required: [path, added, removed]
+      properties:
+        path:
+          type: string
+        added:
+          type: number
+        removed:
+          type: number
+
     TaskStatus:
       type: string
       enum: [preparing, running, done, failed, stopped]
@@ -1484,6 +1531,17 @@ components:
         sessionOpen:
           type: boolean
           description: The agent process is alive and accepts follow-up messages.
+        sessionId:
+          type: string
+          description: Claude session id of the task's agent; links office agents to tasks.
+        usage:
+          $ref: '#/components/schemas/UsageTotals'
+        changes:
+          $ref: '#/components/schemas/CodeChanges'
+        changedFiles:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChangedFile'
 
     AgentSeatMeta:
       description: |

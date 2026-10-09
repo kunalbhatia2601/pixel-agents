@@ -456,13 +456,15 @@ function handleTaskMessage(
         }
         ctx.chatTails?.set(
           id,
-          new ChatTail(agent.jsonlFile, (entries, reset) =>
+          new ChatTail(agent.jsonlFile, (entries, reset, usage) =>
             send({
               type: 'agentChat',
               id,
               entries,
               reset,
               controllable: tasks.taskIdForSession(agent.sessionId) !== undefined,
+              taskId: tasks.taskForSession(agent.sessionId)?.id,
+              usage,
             }),
           ),
         );

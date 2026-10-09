@@ -7,6 +7,7 @@ import { describeAgentSettings } from './describeAgentSettings.js';
 import { inputClass } from './ProjectRoomModal.js';
 import { Button } from './ui/Button.js';
 import { Modal } from './ui/Modal.js';
+import { UsageSummary } from './UsageSummary.js';
 
 const STATUS_CLASS: Record<Task['status'], string> = {
   preparing: 'text-text-muted',
@@ -127,6 +128,7 @@ export function TasksModal({ isOpen, onClose, projects, tasks, onOpenProjects }:
               {projectName(t.projectId)} · {t.branch}
               {t.agent && ` · ${describeAgentSettings(t.agent)}`}
             </span>
+            <UsageSummary usage={t.usage} changes={t.changes} compact />
             {t.worktree && <span className="text-xs text-text-muted">{t.worktree}</span>}
             {t.error && <span className="text-sm text-status-error">{t.error}</span>}
           </div>

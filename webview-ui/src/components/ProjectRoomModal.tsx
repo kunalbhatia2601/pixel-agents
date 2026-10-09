@@ -1,12 +1,14 @@
 import { useState } from 'react';
 
-import type { AgentSettings, Project, ProjectRepo } from '../../../core/src/messages.js';
+import type { AgentSettings, Project, ProjectRepo, Task } from '../../../core/src/messages.js';
 import { NEW_PROJECT } from '../hooks/useTasks.js';
 import { transport } from '../transport/index.js';
+import { sumTasks } from '../usageFormat.js';
 import { AgentSettingsFields } from './AgentSettingsFields.js';
 import { describeAgentSettings } from './describeAgentSettings.js';
 import { Button } from './ui/Button.js';
 import { Modal } from './ui/Modal.js';
+import { UsageSummary } from './UsageSummary.js';
 
 export const inputClass =
   'w-full bg-bg-dark border-2 border-border rounded-none px-6 py-2 text-base text-text';
@@ -101,11 +103,26 @@ function RepoFields({
   );
 }
 
+function ProjectTotals({ tasks }: { tasks: Task[] }) {
+  if (!tasks.length) return <span className="text-sm text-text-muted">No tasks yet</span>;
+  const { usage, changes } = sumTasks(tasks);
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-sm text-text-muted">
+        {tasks.length} {tasks.length === 1 ? 'task' : 'tasks'} — totals:
+      </span>
+      <UsageSummary usage={usage} changes={changes} />
+    </div>
+  );
+}
+
 interface ProjectRoomModalProps {
   isOpen: boolean;
   onClose: () => void;
   projects: Project[];
   agentDefaults: AgentSettings;
+  /** For per-project usage and code totals. */
+  tasks: Task[];
   /** Open straight into this project's form (NEW_PROJECT for a new one); null shows the list. */
   initialEdit: Project | null;
 }
@@ -115,6 +132,7 @@ export function ProjectRoomModal({
   onClose,
   projects,
   agentDefaults,
+  tasks,
   initialEdit,
 }: ProjectRoomModalProps) {
   const [editing, setEditing] = useState<Project | null>(initialEdit);
@@ -268,6 +286,7 @@ export function ProjectRoomModal({
                     Agents: {describeAgentSettings(p.agent)}
                   </span>
                 )}
+                <ProjectTotals tasks={tasks.filter((t) => t.projectId === p.id)} />
                 <span className="text-xs text-text-muted">Docs + memory: {p.dir}</span>
               </div>
             ))}
