@@ -5,7 +5,13 @@ import * as os from 'os';
 import * as path from 'path';
 import { promisify } from 'util';
 
-import type { AgentSettings, Project, ProjectRepo, Task } from '../../core/src/messages.js';
+import type {
+  AgentSettings,
+  Project,
+  ProjectRepo,
+  RepoBranches,
+  Task,
+} from '../../core/src/messages.js';
 import { normalizeProjectPath } from '../../core/src/normalizeProjectPath.js';
 import type { AgentRuntime } from './agentRuntime.js';
 import type { AgentStateStore } from './agentStateStore.js';
@@ -40,9 +46,37 @@ interface PendingPermission {
   message: Record<string, unknown>;
 }
 
+export interface StartOptions {
+  agent?: AgentSettings;
+  /** Repo name → base branch; missing repos start from their default branch. */
+  baseBranches?: Record<string, string>;
+  fromTaskId?: string;
+  carryContext?: boolean;
+}
+
+const FETCH_TIMEOUT_MS = 60_000;
+
+/** Keeps entries for the project's repos only, and refuses names git would read as options. */
+export function cleanBaseBranches(
+  project: Project,
+  input: Record<string, string> | undefined,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const repo of project.repos) {
+    const branch = input?.[repo.name]?.trim();
+    if (!branch) continue;
+    if (branch.startsWith('-') || /\s/.test(branch))
+      throw new Error(`Invalid branch name: ${branch}`);
+    out[repo.name] = branch;
+  }
+  return out;
+}
+
 /** A task's live agent process, open between turns for follow-up messages. */
 interface Session {
   sessionId: string;
+  /** The message that started the current turn, for the memory note. */
+  lastPrompt: string;
   push: (text: string) => void;
   end: () => void;
   interrupt: () => Promise<unknown>;
@@ -166,10 +200,16 @@ export class TaskRunner {
     return [...this.permissions.values()].map((p) => p.message);
   }
 
-  start(projectId: string, title: string, prompt: string, agent?: AgentSettings): Task {
+  start(projectId: string, title: string, prompt: string, opts: StartOptions = {}): Task {
     const project = getProject(projectId);
     if (!project) throw new Error('Unknown project');
     if (!title.trim() || !prompt.trim()) throw new Error('Title and instructions are required');
+    const parent = opts.fromTaskId ? this.tasks.find((t) => t.id === opts.fromTaskId) : undefined;
+    if (opts.fromTaskId && !parent) throw new Error('The task to branch from no longer exists');
+    if (opts.carryContext && !(parent?.sessionId && parent.worktree)) {
+      throw new Error("That task's conversation isn't available to copy");
+    }
+    const baseBranches = cleanBaseBranches(project, opts.baseBranches);
     const id = crypto.randomBytes(4).toString('hex');
     const task: Task = {
       id,
@@ -183,14 +223,61 @@ export class TaskRunner {
       agent: cleanAgentSettings({
         ...getAgentDefaults(),
         ...project.agent,
-        ...cleanAgentSettings(agent),
+        ...cleanAgentSettings(opts.agent),
       }),
+      parentTaskId: parent?.id,
     };
     this.tasks.unshift(task);
     this.rememberWorktree(task.worktree!, project.name);
     this.changed();
-    void this.execute(task, project, prompt.trim());
+    void this.execute(task, project, prompt.trim(), false, {
+      baseBranches,
+      forkFrom: opts.carryContext ? parent : undefined,
+    });
     return task;
+  }
+
+  /** Fetches every remote of each repo, then lists local + remote branches, newest commit first. */
+  async listBranches(projectId: string): Promise<RepoBranches[]> {
+    const project = getProject(projectId);
+    if (!project) throw new Error('Unknown project');
+    return Promise.all(
+      project.repos.map(async (repo) => {
+        const git = (...args: string[]) => run('git', ['-C', repo.path, ...args]);
+        let fetchError: string | undefined;
+        try {
+          await run('git', ['-C', repo.path, 'fetch', '--all', '--prune'], {
+            timeout: FETCH_TIMEOUT_MS,
+          });
+        } catch (err) {
+          fetchError = err instanceof Error ? err.message.split('\n')[0] : String(err);
+        }
+        const { stdout } = await git(
+          'for-each-ref',
+          '--sort=-committerdate',
+          '--format=%(refname:short)',
+          'refs/heads',
+          'refs/remotes',
+        );
+        // "origin" alone is how for-each-ref shortens refs/remotes/origin/HEAD.
+        const remotes = new Set((await git('remote')).stdout.split('\n').filter(Boolean));
+        const branches = stdout
+          .split('\n')
+          .filter((b) => b && !remotes.has(b) && !b.endsWith('/HEAD'));
+        return { repo: repo.name, branches, fetchError };
+      }),
+    );
+  }
+
+  /** The transcript a task's agent writes (and a chat about the task reads). */
+  transcriptFile(task: Task): string | undefined {
+    return task.worktree && task.sessionId
+      ? path.join(transcriptDir(task.worktree), `${task.sessionId}.jsonl`)
+      : undefined;
+  }
+
+  taskById(taskId: string): Task | undefined {
+    return this.tasks.find((t) => t.id === taskId);
   }
 
   /** Running: abort now. Idle with an open session: end it gracefully. */
@@ -201,22 +288,39 @@ export class TaskRunner {
     else this.aborts.get(taskId)?.abort();
   }
 
-  /** The task whose live session is `sessionId`, if this server runs it. */
   /** Any task (finished or not) whose agent ran as `sessionId`: its usage and changes. */
   taskForSession(sessionId: string): Task | undefined {
     return this.tasks.find((t) => t.sessionId === sessionId);
   }
 
-  taskIdForSession(sessionId: string): string | undefined {
-    for (const [taskId, s] of this.sessions) if (s.sessionId === sessionId) return taskId;
-    return undefined;
+  /** Live, or ended but resumable: its worktree (and so its branch and work) still exists. */
+  canMessage(task: Task): boolean {
+    return (
+      this.sessions.has(task.id) ||
+      (!!task.sessionId && !!task.worktree && fs.existsSync(task.worktree))
+    );
   }
 
+  /**
+   * A follow-up always continues the task: same worktree, same branch, same conversation.
+   * A live session takes it directly; an ended one (End session, server restart) is resumed.
+   */
   sendMessage(taskId: string, text: string): void {
-    const session = this.sessions.get(taskId);
     const task = this.tasks.find((t) => t.id === taskId);
-    if (!session || !task || !text.trim()) throw new Error('This agent is not accepting messages');
-    session.push(text.trim());
+    if (!task || !text.trim()) throw new Error('This agent is not accepting messages');
+    const session = this.sessions.get(taskId);
+    if (session) {
+      session.push(text.trim());
+    } else {
+      // A resume already starting has no session yet; a second one would run the agent twice.
+      if (this.aborts.has(taskId))
+        throw new Error('The agent is still starting; try again shortly');
+      const project = getProject(task.projectId);
+      if (!project || !this.canMessage(task)) {
+        throw new Error("This task can't continue: its worktree no longer exists");
+      }
+      void this.execute(task, project, text.trim(), true);
+    }
     task.status = 'running';
     task.error = undefined;
     this.changed();
@@ -237,12 +341,27 @@ export class TaskRunner {
     this.store.broadcast({ type: 'permissionResolved', requestId });
   }
 
-  private async execute(task: Task, project: Project, prompt: string): Promise<void> {
+  /** Runs the task's agent. `resume` continues its ended session in the existing worktree. */
+  private async execute(
+    task: Task,
+    project: Project,
+    prompt: string,
+    resume = false,
+    launch: { baseBranches?: Record<string, string>; forkFrom?: Task } = {},
+  ): Promise<void> {
     const abort = new AbortController();
     this.aborts.set(task.id, abort);
     try {
-      await this.prepareWorktree(task, project);
+      if (!resume) await this.prepareWorktree(task, project, launch.baseBranches ?? {});
       if (abort.signal.aborted) throw new Error('Stopped');
+      const fork = launch.forkFrom;
+      if (fork) {
+        this.copyTranscriptForFork(fork, task);
+        prompt =
+          `(You are continuing from the task "${fork.title}" as a copy of its conversation, now in a new worktree ` +
+          `at ${task.worktree} on branch \`${task.branch}\`. Paths under ${fork.worktree} from earlier now live ` +
+          `under ${task.worktree}. Do not touch the old worktree.)\n\n${prompt}`;
+      }
 
       // Marks the worktree's transcript dir as tracked so the runtime adopts the session.
       this.runtime.startProjectScan(transcriptDir(task.worktree!));
@@ -258,14 +377,21 @@ export class TaskRunner {
       // Streaming input keeps the session open after each result, for follow-up messages.
       const input = inputQueue();
       input.push(prompt);
-      const sessionId = crypto.randomUUID();
+      // Resuming (not forking) keeps the session id, so the transcript and office agent carry on.
+      // Forking copies another task's session under a new id; the original stays untouched.
+      const sessionId = resume ? task.sessionId! : crypto.randomUUID();
       task.sessionId = sessionId;
+      const sessionOptions = resume
+        ? { resume: sessionId }
+        : fork
+          ? { resume: fork.sessionId, forkSession: true, sessionId }
+          : { sessionId };
       const settings = task.agent ?? {};
       const stream = query({
         prompt: input.messages(),
         options: {
           cwd: task.worktree,
-          sessionId,
+          ...sessionOptions,
           abortController: abort,
           model: settings.model,
           effort: settings.effort,
@@ -300,7 +426,11 @@ export class TaskRunner {
 
       const session: Session = {
         sessionId,
-        push: input.push,
+        lastPrompt: prompt,
+        push: (text) => {
+          session.lastPrompt = text;
+          input.push(text);
+        },
         end: input.end,
         interrupt: () => stream.interrupt(),
         interrupted: false,
@@ -316,7 +446,7 @@ export class TaskRunner {
         await this.refreshChanges(task, project);
         if (message.subtype === 'success') {
           task.status = 'done';
-          this.writeMemory(task, project, prompt, message.result);
+          this.writeMemory(task, project, session.lastPrompt, message.result);
         } else if (session.interrupted) {
           task.status = 'done'; // the user stopped this turn; the session waits for them
         } else {
@@ -342,6 +472,23 @@ export class TaskRunner {
     }
   }
 
+  /**
+   * Claude Code looks a session up in the transcript folder of its working directory, so a fork into a
+   * new worktree needs the source transcript there first. Copied before the office scans that folder
+   * (with its old mtime) so it is never adopted as an agent of its own.
+   */
+  private copyTranscriptForFork(from: Task, to: Task): void {
+    const source = this.transcriptFile(from);
+    if (!source || !fs.existsSync(source)) {
+      throw new Error(`The conversation of "${from.title}" is no longer on disk`);
+    }
+    const dest = path.join(transcriptDir(to.worktree!), path.basename(source));
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.copyFileSync(source, dest);
+    const { atime, mtime } = fs.statSync(source);
+    fs.utimesSync(dest, atime, mtime);
+  }
+
   /** Diff of every repo against its merge base with the default branch — what a PR would show. */
   private async refreshChanges(task: Task, project: Project): Promise<void> {
     const files = [];
@@ -365,20 +512,32 @@ export class TaskRunner {
     Object.assign(task, summarizeChanges(files));
   }
 
-  /** One worktree per repo, all on the task's branch. */
-  private async prepareWorktree(task: Task, project: Project): Promise<void> {
+  /** One worktree per repo, all on the task's branch, each from its chosen base (default: the default branch). */
+  private async prepareWorktree(
+    task: Task,
+    project: Project,
+    baseBranches: Record<string, string>,
+  ): Promise<void> {
     for (const repo of project.repos) {
       const git = (...args: string[]) => run('git', ['-C', repo.path, ...args]);
       const dest = repoWorktree(task, project, repo);
-      let base = repo.defaultBranch;
-      try {
-        await git('fetch', 'origin', repo.defaultBranch);
-        base = `origin/${repo.defaultBranch}`;
-      } catch {
-        // No remote (or offline): branch from the local default branch.
-        console.warn(
-          `[Pixel Agents] Task ${task.id}: fetch failed for ${repo.name}, using ${base}`,
-        );
+      let base = baseBranches[repo.name];
+      if (base) {
+        // Picked from listBranches, which already fetched; it must still resolve to a commit.
+        await git('rev-parse', '--verify', '--quiet', `${base}^{commit}`).catch(() => {
+          throw new Error(`Branch "${base}" not found in ${repo.name}`);
+        });
+      } else {
+        base = repo.defaultBranch;
+        try {
+          await git('fetch', 'origin', repo.defaultBranch);
+          base = `origin/${repo.defaultBranch}`;
+        } catch {
+          // No remote (or offline): branch from the local default branch.
+          console.warn(
+            `[Pixel Agents] Task ${task.id}: fetch failed for ${repo.name}, using ${base}`,
+          );
+        }
       }
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       await git('worktree', 'add', '-b', task.branch!, dest, base);
@@ -429,12 +588,19 @@ export class TaskRunner {
     return lines.join('\n');
   }
 
+  /** One note per task: the first outcome, then each follow-up appended below it. */
   private writeMemory(task: Task, project: Project, prompt: string, summary: string): void {
-    const date = new Date().toISOString().slice(0, 10);
+    // The task's start date, not today's: a follow-up days later must find the same file.
+    const date = new Date(task.createdAt).toISOString().slice(0, 10);
     const file = path.join(project.dir!, 'memory', `${date}-${slugify(task.title)}-${task.id}.md`);
-    const note = `# ${task.title}\n\nBranch: \`${task.branch}\`\n\n## Task\n\n${prompt}\n\n## Outcome\n\n${summary}\n`;
     try {
-      fs.writeFileSync(file, note, 'utf-8');
+      if (fs.existsSync(file)) {
+        const quoted = prompt.replace(/^/gm, '> ');
+        fs.appendFileSync(file, `\n## Follow-up\n\n${quoted}\n\n${summary}\n`, 'utf-8');
+      } else {
+        const note = `# ${task.title}\n\nBranch: \`${task.branch}\`\n\n## Task\n\n${prompt}\n\n## Outcome\n\n${summary}\n`;
+        fs.writeFileSync(file, note, 'utf-8');
+      }
     } catch (err) {
       console.error(`[Pixel Agents] Task ${task.id}: could not write memory note`, err);
     }

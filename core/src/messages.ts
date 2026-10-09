@@ -46,7 +46,8 @@ export type ServerMessage =
   | ActionError
   | AgentDefaultsLoaded
   | AgentChat
-  | FolderPicked;
+  | FolderPicked
+  | BranchesListed;
 
 export type ClientMessage =
   | WebviewReady
@@ -81,7 +82,8 @@ export type ClientMessage =
   | UnwatchAgentChat
   | SendAgentMessage
   | InterruptAgent
-  | PickFolder;
+  | PickFolder
+  | ListBranches;
 
 export interface ProviderCapabilities {
   type: 'providerCapabilities';
@@ -382,6 +384,7 @@ export interface Task {
   agent?: AgentSettings;
   sessionOpen?: boolean;
   sessionId?: string;
+  parentTaskId?: string;
   usage?: UsageTotals;
   changes?: CodeChanges;
   changedFiles?: ChangedFile[];
@@ -450,7 +453,7 @@ export interface AgentDefaultsLoaded {
 
 export interface AgentChat {
   type: 'agentChat';
-  id: number;
+  id?: number;
   entries: ChatEntry[];
   reset: boolean;
   controllable: boolean;
@@ -471,6 +474,18 @@ export interface FolderPicked {
   type: 'folderPicked';
   requestId: string;
   path?: string;
+}
+
+export interface BranchesListed {
+  type: 'branchesListed';
+  requestId: string;
+  repos: RepoBranches[];
+}
+
+export interface RepoBranches {
+  repo: string;
+  branches: string[];
+  fetchError?: string;
 }
 
 export interface WebviewReady {
@@ -604,6 +619,9 @@ export interface StartTask {
   title: string;
   prompt: string;
   agent?: AgentSettings;
+  baseBranches?: Record<string, string>;
+  fromTaskId?: string;
+  carryContext?: boolean;
 }
 
 export interface StopTask {
@@ -626,26 +644,36 @@ export interface SaveAgentDefaults {
 
 export interface WatchAgentChat {
   type: 'watchAgentChat';
-  id: number;
+  id?: number;
+  taskId?: string;
 }
 
 export interface UnwatchAgentChat {
   type: 'unwatchAgentChat';
-  id: number;
+  id?: number;
+  taskId?: string;
 }
 
 export interface SendAgentMessage {
   type: 'sendAgentMessage';
-  id: number;
+  id?: number;
+  taskId?: string;
   text: string;
 }
 
 export interface InterruptAgent {
   type: 'interruptAgent';
-  id: number;
+  id?: number;
+  taskId?: string;
 }
 
 export interface PickFolder {
   type: 'pickFolder';
   requestId: string;
+}
+
+export interface ListBranches {
+  type: 'listBranches';
+  requestId: string;
+  projectId: string;
 }

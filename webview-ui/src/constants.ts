@@ -323,3 +323,10 @@ export const PROJECT_SHELF_WIDTHS: Readonly<Record<string, number>> = {
 };
 /** Rows above the room's floor where wall-mounted shelves still count as inside it. */
 export const PROJECT_SHELF_WALL_ROWS = 2;
+
+// ── Tasks room (Live / All boards) ──────────────────────────────
+/** Area labels of the Tasks room's two halves; each shows a clickable task board. */
+export const LIVE_TASKS_AREA = 'Live Tasks';
+export const ALL_TASKS_AREA = 'All Tasks';
+/** Inset of a task board inside its room, in tiles (keeps the walls and doorways visible). */
+export const TASK_BOARD_INSET_TILES = 0.5;

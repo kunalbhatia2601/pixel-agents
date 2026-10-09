@@ -1,6 +1,6 @@
 import { execFile } from 'child_process';
 
-import type { AgentSettings, Project } from '../../core/src/messages.js';
+import type { AgentSettings, Project, Task } from '../../core/src/messages.js';
 import type { HookProvider } from '../../core/src/provider.js';
 import { resendAgentActivity } from './agentActivityResend.js';
 import { ChatTail } from './agentChat.js';
@@ -75,7 +75,7 @@ export interface ClientMessageContext {
   /** Project/task runner (standalone only). Every task message is privileged: it runs code on this machine. */
   tasks?: TaskRunner;
   /** This connection's open agent chats; the transport disposes them on disconnect. */
-  chatTails?: Map<number, ChatTail>;
+  chatTails?: Map<string, ChatTail>;
 }
 
 // ── Setting key constants (mirror adapters/vscode/constants.ts) ──
@@ -299,6 +299,7 @@ export function handleClientMessage(
     case 'sendAgentMessage':
     case 'interruptAgent':
     case 'pickFolder':
+    case 'listBranches':
       handleTaskMessage(msg, send, ctx);
       break;
 
@@ -395,9 +396,27 @@ function stringRecord(value: unknown): Record<string, string> | undefined {
   );
 }
 
-function taskIdForAgent(ctx: ClientMessageContext, agentId: number): string {
-  const sessionId = ctx.store.get(agentId)?.sessionId;
-  const taskId = sessionId ? ctx.tasks?.taskIdForSession(sessionId) : undefined;
+/** A chat addressed by task (Tasks room) or by office agent (clicking a character). */
+interface ChatTarget {
+  key: string;
+  agentId?: number;
+  task?: Task;
+  file?: string;
+}
+
+function chatTarget(ctx: ClientMessageContext, msg: Record<string, unknown>): ChatTarget {
+  if (typeof msg.taskId === 'string') {
+    const task = ctx.tasks?.taskById(msg.taskId);
+    return { key: `task:${msg.taskId}`, task, file: task && ctx.tasks?.transcriptFile(task) };
+  }
+  const agentId = Number(msg.id);
+  const agent = ctx.store.get(agentId);
+  const task = agent ? ctx.tasks?.taskForSession(agent.sessionId) : undefined;
+  return { key: `agent:${agentId}`, agentId, task, file: agent?.jsonlFile || undefined };
+}
+
+function taskIdFor(ctx: ClientMessageContext, msg: Record<string, unknown>): string {
+  const taskId = chatTarget(ctx, msg).task?.id;
   if (!taskId) throw new Error('Only agents started as tasks can be messaged or interrupted');
   return taskId;
 }
@@ -433,12 +452,12 @@ function handleTaskMessage(
         store.broadcast({ type: 'projectsLoaded', projects: listProjects() });
         break;
       case 'startTask':
-        tasks.start(
-          String(msg.projectId),
-          String(msg.title),
-          String(msg.prompt),
-          msg.agent as AgentSettings | undefined,
-        );
+        tasks.start(String(msg.projectId), String(msg.title), String(msg.prompt), {
+          agent: msg.agent as AgentSettings | undefined,
+          baseBranches: stringRecord(msg.baseBranches),
+          fromTaskId: typeof msg.fromTaskId === 'string' ? msg.fromTaskId : undefined,
+          carryContext: msg.carryContext === true,
+        });
         break;
       case 'saveAgentDefaults':
         store.broadcast({
@@ -447,26 +466,37 @@ function handleTaskMessage(
         });
         break;
       case 'watchAgentChat': {
-        const id = Number(msg.id);
-        const agent = store.get(id);
-        ctx.chatTails?.get(id)?.dispose();
-        if (!agent?.jsonlFile) {
-          send({ type: 'agentChat', id, entries: [], reset: true, controllable: false });
+        const target = chatTarget(ctx, msg);
+        ctx.chatTails?.get(target.key)?.dispose();
+        const reply = () => ({
+          type: 'agentChat',
+          id: target.agentId,
+          taskId: target.task?.id,
+          controllable: !!target.task && tasks.canMessage(target.task),
+        });
+        if (!target.file) {
+          send({ ...reply(), entries: [], reset: true });
           break;
         }
         ctx.chatTails?.set(
-          id,
-          new ChatTail(agent.jsonlFile, (entries, reset, usage) =>
-            send({
-              type: 'agentChat',
-              id,
-              entries,
-              reset,
-              controllable: tasks.taskIdForSession(agent.sessionId) !== undefined,
-              taskId: tasks.taskForSession(agent.sessionId)?.id,
-              usage,
-            }),
+          target.key,
+          new ChatTail(target.file, (entries, reset, usage) =>
+            send({ ...reply(), entries, reset, usage }),
           ),
+        );
+        break;
+      }
+      case 'listBranches': {
+        const requestId = String(msg.requestId);
+        tasks.listBranches(String(msg.projectId)).then(
+          (repos) => send({ type: 'branchesListed', requestId, repos }),
+          (err: unknown) => {
+            send({ type: 'branchesListed', requestId, repos: [] });
+            send({
+              type: 'actionError',
+              message: err instanceof Error ? err.message : String(err),
+            });
+          },
         );
         break;
       }
@@ -487,15 +517,17 @@ function handleTaskMessage(
         });
         break;
       }
-      case 'unwatchAgentChat':
-        ctx.chatTails?.get(Number(msg.id))?.dispose();
-        ctx.chatTails?.delete(Number(msg.id));
+      case 'unwatchAgentChat': {
+        const { key } = chatTarget(ctx, msg);
+        ctx.chatTails?.get(key)?.dispose();
+        ctx.chatTails?.delete(key);
         break;
+      }
       case 'sendAgentMessage':
-        tasks.sendMessage(taskIdForAgent(ctx, Number(msg.id)), String(msg.text));
+        tasks.sendMessage(taskIdFor(ctx, msg), String(msg.text));
         break;
       case 'interruptAgent':
-        tasks.interrupt(taskIdForAgent(ctx, Number(msg.id))).catch((err: unknown) =>
+        tasks.interrupt(taskIdFor(ctx, msg)).catch((err: unknown) =>
           send({
             type: 'actionError',
             message: err instanceof Error ? err.message : String(err),

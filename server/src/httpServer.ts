@@ -172,7 +172,7 @@ function registerWebSocketRoute(app: FastifyInstance, options: HttpServerOptions
 
     const { store } = options;
     /** Agent chats this client has open, keyed by agent id. */
-    const chatTails = new Map<number, ChatTail>();
+    const chatTails = new Map<string, ChatTail>();
 
     // Pipe store events to WebSocket client
     const onAgentAdded = (id: number, agent: AgentState) => {

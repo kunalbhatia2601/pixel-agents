@@ -1,47 +1,123 @@
 import { useState } from 'react';
 
-import type { AgentSettings, Project, Task } from '../../../core/src/messages.js';
+import type { PermissionAsked, Project, Task } from '../../../core/src/messages.js';
+import { isLiveTask, STATUS_CLASS, statusLabel } from '../taskStatus.js';
 import { transport } from '../transport/index.js';
-import { AgentSettingsFields } from './AgentSettingsFields.js';
 import { describeAgentSettings } from './describeAgentSettings.js';
-import { inputClass } from './ProjectRoomModal.js';
+import { NewTaskForm } from './NewTaskForm.js';
 import { Button } from './ui/Button.js';
 import { Modal } from './ui/Modal.js';
 import { UsageSummary } from './UsageSummary.js';
 
-const STATUS_CLASS: Record<Task['status'], string> = {
-  preparing: 'text-text-muted',
-  running: 'text-status-active',
-  done: 'text-status-success',
-  failed: 'text-status-error',
-  stopped: 'text-warning',
-};
+export type TaskBoardTab = 'live' | 'all';
+
+/** What the board shows when opened: a tab, or a new-task form (optionally branching from a task). */
+export interface TaskBoardView {
+  tab: TaskBoardTab;
+  form?: { fromTask?: Task };
+}
 
 interface TasksModalProps {
-  isOpen: boolean;
+  view: TaskBoardView | null;
   onClose: () => void;
   projects: Project[];
   tasks: Task[];
+  permissions: PermissionAsked[];
+  onOpenChat: (task: Task) => void;
   onOpenProjects: () => void;
 }
 
-export function TasksModal({ isOpen, onClose, projects, tasks, onOpenProjects }: TasksModalProps) {
-  const [projectId, setProjectId] = useState('');
-  const [title, setTitle] = useState('');
-  const [prompt, setPrompt] = useState('');
-  const [agent, setAgent] = useState<AgentSettings>({});
-  const selected = projectId || projects[0]?.id || '';
+function TaskRow({
+  task,
+  projectName,
+  parent,
+  waiting,
+  onOpen,
+  onBranch,
+}: {
+  task: Task;
+  projectName: string;
+  parent?: Task;
+  waiting: number;
+  onOpen: () => void;
+  onBranch: () => void;
+}) {
+  const live = isLiveTask(task);
+  return (
+    <div className="border-2 border-border p-6 flex flex-col gap-2">
+      <div className="flex items-center justify-between gap-4">
+        <button
+          className="text-lg text-left cursor-pointer hover:text-accent-bright"
+          onClick={onOpen}
+          title="Open the chat"
+        >
+          {task.title}
+        </button>
+        <div className="flex items-center gap-4 shrink-0">
+          {waiting > 0 && <span className="text-status-permission">needs you ({waiting})</span>}
+          <span className={STATUS_CLASS[task.status]}>{statusLabel(task)}</span>
+        </div>
+      </div>
+      <span className="text-sm text-text-muted">
+        {projectName} · {task.branch}
+        {task.agent && ` · ${describeAgentSettings(task.agent)}`}
+      </span>
+      {parent && <span className="text-xs text-text-muted">Branched from “{parent.title}”</span>}
+      <UsageSummary usage={task.usage} changes={task.changes} compact />
+      {task.error && <span className="text-sm text-status-error">{task.error}</span>}
+      <div className="flex gap-4 justify-end">
+        <Button size="sm" onClick={onOpen}>
+          Chat
+        </Button>
+        <Button
+          size="sm"
+          onClick={onBranch}
+          title="Start a new task with its own branch from this one"
+        >
+          New branch from here
+        </Button>
+        {live && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => transport.send({ type: 'stopTask', taskId: task.id })}
+            title={
+              task.status === 'done'
+                ? 'The agent is waiting for messages; end its session (you can still message it later)'
+                : 'Abort the agent'
+            }
+          >
+            {task.status === 'done' ? 'End session' : 'Stop'}
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Task Board: Live and All tabs; every task opens its chat, any can branch into a new task. */
+export function TasksModal({
+  view,
+  onClose,
+  projects,
+  tasks,
+  permissions,
+  onOpenChat,
+  onOpenProjects,
+}: TasksModalProps) {
+  const [tab, setTab] = useState<TaskBoardTab>(view?.tab ?? 'live');
+  const [form, setForm] = useState<TaskBoardView['form'] | null>(view?.form ?? null);
+  const shown = tab === 'live' ? tasks.filter(isLiveTask) : tasks;
   const projectName = (id: string) => projects.find((p) => p.id === id)?.name ?? 'Deleted project';
 
-  const start = () => {
-    transport.send({ type: 'startTask', projectId: selected, title, prompt, agent });
-    setTitle('');
-    setPrompt('');
-  };
-
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Tasks" className="w-[720px] max-w-[95vw]">
-      <div className="flex flex-col gap-8 px-10 pb-8 max-h-[75vh] overflow-y-auto">
+    <Modal
+      isOpen={view !== null}
+      onClose={onClose}
+      title="Task Board"
+      className="w-[760px] max-w-[95vw]"
+    >
+      <div className="flex flex-col gap-8 px-10 pb-8 max-h-[78vh] overflow-y-auto">
         {projects.length === 0 ? (
           <div className="flex flex-col gap-4">
             <p className="text-text-muted">
@@ -52,86 +128,53 @@ export function TasksModal({ isOpen, onClose, projects, tasks, onOpenProjects }:
               Add project
             </Button>
           </div>
+        ) : form ? (
+          <NewTaskForm
+            key={form.fromTask?.id ?? 'new'}
+            projects={projects}
+            fromTask={form.fromTask}
+            onStarted={() => {
+              setForm(null);
+              setTab('live');
+            }}
+            onCancel={() => setForm(null)}
+          />
         ) : (
-          <div className="flex flex-col gap-6 border-2 border-border p-6">
-            <label className="flex flex-col gap-2">
-              Project
-              <select
-                className={inputClass}
-                value={selected}
-                onChange={(e) => setProjectId(e.target.value)}
-              >
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} ({p.repos.map((r) => r.name).join(' + ')})
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex flex-col gap-2">
-              Title
-              <input
-                className={inputClass}
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-              />
-            </label>
-            <label className="flex flex-col gap-2">
-              Instructions
-              <textarea
-                className={`${inputClass} min-h-[120px]`}
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-              />
-            </label>
-            <details>
-              <summary className="cursor-pointer text-text-muted">
-                Agent settings for this task (empty = project / defaults)
-              </summary>
-              <div className="pt-4">
-                <AgentSettingsFields value={agent} onChange={setAgent} inheritLabel="inherit" />
-              </div>
-            </details>
-            <Button
-              variant={title.trim() && prompt.trim() ? 'accent' : 'disabled'}
-              disabled={!title.trim() || !prompt.trim()}
-              onClick={start}
-            >
-              Start task
-            </Button>
-          </div>
+          <Button variant="accent" className="self-start" onClick={() => setForm({})}>
+            + New task
+          </Button>
         )}
 
-        {tasks.map((t) => (
-          <div key={t.id} className="border-2 border-border p-6 flex flex-col gap-2">
-            <div className="flex items-center justify-between gap-4">
-              <span className="text-lg">{t.title}</span>
-              <div className="flex items-center gap-4">
-                <span className={STATUS_CLASS[t.status]}>{t.status}</span>
-                {(t.status === 'running' || t.status === 'preparing' || t.sessionOpen) && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => transport.send({ type: 'stopTask', taskId: t.id })}
-                    title={
-                      t.status === 'done'
-                        ? 'The agent is waiting for messages; end its session'
-                        : 'Abort the agent'
-                    }
-                  >
-                    {t.status === 'done' ? 'End session' : 'Stop'}
-                  </Button>
-                )}
-              </div>
-            </div>
-            <span className="text-sm text-text-muted">
-              {projectName(t.projectId)} · {t.branch}
-              {t.agent && ` · ${describeAgentSettings(t.agent)}`}
-            </span>
-            <UsageSummary usage={t.usage} changes={t.changes} compact />
-            {t.worktree && <span className="text-xs text-text-muted">{t.worktree}</span>}
-            {t.error && <span className="text-sm text-status-error">{t.error}</span>}
-          </div>
+        <div className="flex gap-4" role="tablist">
+          {(['live', 'all'] as const).map((t) => (
+            <Button
+              key={t}
+              size="md"
+              role="tab"
+              aria-selected={tab === t}
+              variant={tab === t ? 'active' : 'default'}
+              onClick={() => setTab(t)}
+            >
+              {t === 'live' ? `Live (${tasks.filter(isLiveTask).length})` : `All (${tasks.length})`}
+            </Button>
+          ))}
+        </div>
+
+        {shown.length === 0 && (
+          <p className="text-text-muted">
+            {tab === 'live' ? 'Nothing running or waiting right now.' : 'No tasks yet.'}
+          </p>
+        )}
+        {shown.map((t) => (
+          <TaskRow
+            key={t.id}
+            task={t}
+            projectName={projectName(t.projectId)}
+            parent={t.parentTaskId ? tasks.find((p) => p.id === t.parentTaskId) : undefined}
+            waiting={permissions.filter((p) => p.taskId === t.id).length}
+            onOpen={() => onOpenChat(t)}
+            onBranch={() => setForm({ fromTask: t })}
+          />
         ))}
       </div>
     </Modal>

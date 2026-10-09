@@ -11,9 +11,17 @@ import { UsageSummary } from './UsageSummary.js';
 /** Pixels from the bottom within which new entries keep the view pinned to the latest. */
 const STICK_TO_BOTTOM_PX = 80;
 
+/** A chat is opened for an office character (agentId) or for a task (taskId). */
+export interface ChatTarget {
+  agentId?: number;
+  taskId?: string;
+}
+
 interface AgentChatModalProps {
-  agentId: number | null;
+  target: ChatTarget | null;
   title: string;
+  /** Start a new task branching from this chat's task. */
+  onBranch: (task: Task) => void;
   onClose: () => void;
   /** Approvals and questions this agent is waiting on. */
   requests: PermissionAsked[];
@@ -60,35 +68,52 @@ function Entry({ entry }: { entry: ChatEntry }) {
 }
 
 /** Live conversation of one agent. Task agents can be messaged and interrupted. */
-export function AgentChatModal({ agentId, title, onClose, requests, tasks }: AgentChatModalProps) {
+export function AgentChatModal({
+  target,
+  title,
+  onBranch,
+  onClose,
+  requests,
+  tasks,
+}: AgentChatModalProps) {
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [controllable, setControllable] = useState(false);
-  const [taskId, setTaskId] = useState<string | undefined>();
+  const [taskId, setTaskId] = useState<string | undefined>(target?.taskId);
   const [transcriptUsage, setTranscriptUsage] = useState<UsageTotals | undefined>();
   const task = taskId ? tasks.find((t) => t.id === taskId) : undefined;
   const [draft, setDraft] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
 
+  // The server answers in kind: by task when watched by task, by agent id otherwise.
+  const agentId = target?.agentId;
+  const targetTaskId = target?.taskId;
   useEffect(() => {
-    if (agentId === null) return;
+    if (agentId === undefined && targetTaskId === undefined) return;
+    const address = targetTaskId !== undefined ? { taskId: targetTaskId } : { id: agentId };
     setEntries([]);
-    setTaskId(undefined);
+    setTaskId(targetTaskId);
     setTranscriptUsage(undefined);
     stickRef.current = true;
     const unsubscribe = transport.onMessage((msg) => {
-      if (msg.type !== 'agentChat' || msg.id !== agentId) return;
+      if (msg.type !== 'agentChat') return;
+      const mine =
+        targetTaskId !== undefined
+          ? msg.id === undefined && msg.taskId === targetTaskId
+          : msg.id === agentId;
+      if (!mine) return;
       setControllable(msg.controllable);
       setTaskId(msg.taskId);
       if (msg.usage) setTranscriptUsage(msg.usage);
       setEntries((prev) => (msg.reset ? msg.entries : [...prev, ...msg.entries]));
     });
-    transport.send({ type: 'watchAgentChat', id: agentId });
+    transport.send({ type: 'watchAgentChat', ...address });
     return () => {
       unsubscribe();
-      transport.send({ type: 'unwatchAgentChat', id: agentId });
+      transport.send({ type: 'unwatchAgentChat', ...address });
     };
-  }, [agentId]);
+  }, [agentId, targetTaskId]);
+  const address = taskId !== undefined ? { taskId } : { id: agentId };
 
   useEffect(() => {
     const el = listRef.current;
@@ -96,15 +121,15 @@ export function AgentChatModal({ agentId, title, onClose, requests, tasks }: Age
   }, [entries]);
 
   const send = () => {
-    if (agentId === null || !draft.trim()) return;
-    transport.send({ type: 'sendAgentMessage', id: agentId, text: draft });
+    if (!target || !draft.trim()) return;
+    transport.send({ type: 'sendAgentMessage', ...address, text: draft });
     setDraft('');
     stickRef.current = true;
   };
 
   return (
     <Modal
-      isOpen={agentId !== null}
+      isOpen={target !== null}
       onClose={onClose}
       title={title}
       className="w-[820px] max-w-[95vw]"
@@ -112,7 +137,20 @@ export function AgentChatModal({ agentId, title, onClose, requests, tasks }: Age
       <div className="flex flex-col gap-6 px-10 pb-8 h-[75vh]">
         <div className="flex flex-col gap-2 border-b-2 border-border pb-4">
           {/* Task agents: the SDK's totals (with cost). Others: summed from the transcript. */}
-          <UsageSummary usage={task?.usage ?? transcriptUsage} changes={task?.changes} />
+          <div className="flex items-start justify-between gap-4">
+            <UsageSummary usage={task?.usage ?? transcriptUsage} changes={task?.changes} />
+            {task && (
+              <Button size="sm" className="shrink-0" onClick={() => onBranch(task)}>
+                New branch from here
+              </Button>
+            )}
+          </div>
+          {task && (
+            <span className="text-xs text-text-muted">
+              Branch <span className="font-mono">{task.branch}</span> — messages continue this
+              branch.
+            </span>
+          )}
           {!!task?.changedFiles?.length && (
             <details className="text-sm">
               <summary className="cursor-pointer text-text-muted">Changed files</summary>
@@ -159,9 +197,7 @@ export function AgentChatModal({ agentId, title, onClose, requests, tasks }: Age
             <div className="flex gap-4 justify-end">
               <Button
                 variant="ghost"
-                onClick={() =>
-                  agentId !== null && transport.send({ type: 'interruptAgent', id: agentId })
-                }
+                onClick={() => transport.send({ type: 'interruptAgent', ...address })}
                 title="Stop the current turn; the agent waits for your next message"
               >
                 Interrupt

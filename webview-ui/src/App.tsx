@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Project } from '../../core/src/messages.js';
 import { toMajorMinor } from './changelogData.js';
-import { AgentChatModal } from './components/AgentChatModal.js';
+import { AgentChatModal, type ChatTarget } from './components/AgentChatModal.js';
 import { BottomToolbar } from './components/BottomToolbar.js';
 import { ChangelogModal } from './components/ChangelogModal.js';
 import { ConnectionIndicator } from './components/ConnectionIndicator.js';
@@ -13,7 +13,7 @@ import { IntroBubble } from './components/IntroBubble.js';
 import { MigrationNotice } from './components/MigrationNotice.js';
 import { ProjectRoomModal } from './components/ProjectRoomModal.js';
 import { SettingsModal } from './components/SettingsModal.js';
-import { TasksModal } from './components/TasksModal.js';
+import { type TaskBoardView, TasksModal } from './components/TasksModal.js';
 import { Tooltip } from './components/Tooltip.js';
 import { Modal } from './components/ui/Modal.js';
 import { VersionIndicator } from './components/VersionIndicator.js';
@@ -25,6 +25,7 @@ import { useIntroTour } from './hooks/useIntroTour.js';
 import { NEW_PROJECT, useTasks } from './hooks/useTasks.js';
 import { OfficeCanvas } from './office/components/OfficeCanvas.js';
 import { ProjectShelves } from './office/components/ProjectShelves.js';
+import { TaskRoomBoards } from './office/components/TaskRoomBoards.js';
 import { ToolOverlay } from './office/components/ToolOverlay.js';
 import { EditorState } from './office/editor/editorState.js';
 import { EditorToolbar } from './office/editor/EditorToolbar.js';
@@ -69,14 +70,20 @@ function App() {
   const editor = useEditorActions(getOfficeState, editorState);
   // Before useExtensionMessages: its effect sends webviewReady, whose replies this listens for.
   const taskState = useTasks();
-  const [isTasksOpen, setIsTasksOpen] = useState(false);
+  // null = closed. Keyed per open so the board starts on the requested tab / form.
+  const [board, setBoard] = useState<(TaskBoardView & { key: number }) | null>(null);
+  const openBoard = (view: TaskBoardView) => setBoard({ ...view, key: Date.now() });
+  const isTasksOpen = board !== null;
   // null = closed. Opened from the store room's shelves: straight into a project, a new one, or the list.
   const [projectsView, setProjectsView] = useState<{ edit: Project | null; key: number } | null>(
     null,
   );
   const openProjects = (edit: Project | null) => setProjectsView({ edit, key: Date.now() });
   const isProjectsOpen = projectsView !== null;
-  const [chatAgentId, setChatAgentId] = useState<number | null>(null);
+  const [chatTarget, setChatTarget] = useState<ChatTarget | null>(null);
+  const chatTask = chatTarget?.taskId
+    ? taskState.tasks.find((t) => t.id === chatTarget.taskId)
+    : undefined;
 
   const isEditDirty = useCallback(
     () => editor.isEditMode && editor.isDirty,
@@ -256,7 +263,7 @@ function App() {
     const focusId = meta ? meta.parentAgentId : agentId;
     transport.send({ type: 'focusAgent', id: focusId });
     // Standalone has no terminal to focus: the chat is where you follow and steer the agent.
-    if (isBrowserRuntime) setChatAgentId(focusId);
+    if (isBrowserRuntime) setChatTarget({ agentId: focusId });
   }, []);
 
   const officeState = getOfficeState();
@@ -469,6 +476,20 @@ function App() {
               onOpenDirectory={() => openProjects(null)}
             />
           )}
+
+          {isBrowserRuntime && !editor.isEditMode && (
+            <TaskRoomBoards
+              officeState={officeState}
+              containerRef={containerRef}
+              zoom={editor.zoom}
+              panRef={editor.panRef}
+              projects={taskState.projects}
+              tasks={taskState.tasks}
+              permissions={taskState.permissions}
+              onOpenTask={(task) => setChatTarget({ taskId: task.id })}
+              onOpenBoard={(tab) => openBoard({ tab })}
+            />
+          )}
         </>
       ) : (
         <DebugView
@@ -550,16 +571,22 @@ function App() {
         isSettingsOpen={isSettingsOpen}
         onToggleSettings={() => setIsSettingsOpen((v) => !v)}
         workspaceFolders={workspaceFolders}
-        onOpenTasks={() => setIsTasksOpen(true)}
+        onOpenTasks={() => openBoard({ tab: 'live', form: {} })}
       />
 
       <TasksModal
-        isOpen={isTasksOpen}
-        onClose={() => setIsTasksOpen(false)}
+        key={board?.key}
+        view={board}
+        onClose={() => setBoard(null)}
         projects={taskState.projects}
         tasks={taskState.tasks}
+        permissions={taskState.permissions}
+        onOpenChat={(task) => {
+          setBoard(null);
+          setChatTarget({ taskId: task.id });
+        }}
         onOpenProjects={() => {
-          setIsTasksOpen(false);
+          setBoard(null);
           openProjects(NEW_PROJECT);
         }}
       />
@@ -575,14 +602,23 @@ function App() {
       />
 
       <AgentChatModal
-        agentId={chatAgentId}
+        key={chatTarget?.taskId ?? chatTarget?.agentId}
+        target={chatTarget}
         title={
-          chatAgentId === null
-            ? ''
-            : `${getOfficeState().characters.get(chatAgentId)?.folderName ?? 'Agent'} #${chatAgentId}`
+          chatTask
+            ? chatTask.title
+            : chatTarget?.agentId !== undefined
+              ? `${getOfficeState().characters.get(chatTarget.agentId)?.folderName ?? 'Agent'} #${chatTarget.agentId}`
+              : ''
         }
-        onClose={() => setChatAgentId(null)}
-        requests={taskState.permissions.filter((p) => p.agentId === chatAgentId)}
+        onClose={() => setChatTarget(null)}
+        onBranch={(task) => {
+          setChatTarget(null);
+          openBoard({ tab: 'live', form: { fromTask: task } });
+        }}
+        requests={taskState.permissions.filter((p) =>
+          chatTarget?.taskId ? p.taskId === chatTarget.taskId : p.agentId === chatTarget?.agentId,
+        )}
         tasks={taskState.tasks}
       />
 
@@ -663,7 +699,7 @@ function App() {
             isSettingsOpen ||
             isTasksOpen ||
             isProjectsOpen ||
-            chatAgentId !== null ||
+            chatTarget !== null ||
             isChangelogOpen ||
             isHooksInfoOpen ||
             showMigrationNotice ||

@@ -127,6 +127,7 @@ components:
         - $ref: '#/components/schemas/AgentDefaultsLoaded'
         - $ref: '#/components/schemas/AgentChat'
         - $ref: '#/components/schemas/FolderPicked'
+        - $ref: '#/components/schemas/BranchesListed'
       discriminator: type
 
     ClientMessage:
@@ -164,6 +165,7 @@ components:
         - $ref: '#/components/schemas/SendAgentMessage'
         - $ref: '#/components/schemas/InterruptAgent'
         - $ref: '#/components/schemas/PickFolder'
+        - $ref: '#/components/schemas/ListBranches'
       discriminator: type
 
     # ── Server message variants ────────────────────────────────────
@@ -1202,6 +1204,17 @@ components:
           type: string
         agent:
           $ref: '#/components/schemas/AgentSettings'
+        baseBranches:
+          type: object
+          description: Repo name -> branch to start from (any local or remote branch). Missing = the repo's default branch.
+          additionalProperties:
+            type: string
+        fromTaskId:
+          type: string
+          description: Branching from this task (New branch from here); recorded as parentTaskId.
+        carryContext:
+          type: boolean
+          description: With fromTaskId, the new agent starts as a copy of that task's conversation.
 
     StopTask:
       description: Abort a running task's agent. Privileged.
@@ -1337,7 +1350,7 @@ components:
       description: Conversation entries for a watched agent; reset=true replaces, false appends.
       type: object
       additionalProperties: false
-      required: [type, id, entries, reset, controllable]
+      required: [type, entries, reset, controllable]
       properties:
         type:
           const: agentChat
@@ -1357,6 +1370,49 @@ components:
           description: The task this agent ran, if any; its usage and changes are authoritative.
         usage:
           $ref: '#/components/schemas/UsageTotals'
+
+    ListBranches:
+      description: Fetch every remote of each project repo, then list its branches. Privileged.
+      type: object
+      additionalProperties: false
+      required: [type, requestId, projectId]
+      properties:
+        type:
+          const: listBranches
+        requestId:
+          type: string
+        projectId:
+          type: string
+
+    BranchesListed:
+      type: object
+      additionalProperties: false
+      required: [type, requestId, repos]
+      properties:
+        type:
+          const: branchesListed
+        requestId:
+          type: string
+        repos:
+          type: array
+          items:
+            $ref: '#/components/schemas/RepoBranches'
+
+    RepoBranches:
+      type: object
+      additionalProperties: false
+      required: [repo, branches]
+      properties:
+        repo:
+          type: string
+        branches:
+          type: array
+          description: Local and remote branches, most recently committed first.
+          items:
+            type: string
+        fetchError:
+          type: string
+          description: Set when fetching failed; the list is then what was known locally.
 
     PickFolder:
       description: Open the native folder dialog on the server's machine. Privileged.
@@ -1397,33 +1453,42 @@ components:
       description: Start streaming an agent's conversation to this client. Privileged.
       type: object
       additionalProperties: false
-      required: [type, id]
+      required: [type]
       properties:
         type:
           const: watchAgentChat
         id:
           type: integer
+        taskId:
+          type: string
+          description: Address the chat by task instead of office agent id.
 
     UnwatchAgentChat:
       type: object
       additionalProperties: false
-      required: [type, id]
+      required: [type]
       properties:
         type:
           const: unwatchAgentChat
         id:
           type: integer
+        taskId:
+          type: string
+          description: Address the chat by task instead of office agent id.
 
     SendAgentMessage:
       description: Send a follow-up message to a task agent. Privileged.
       type: object
       additionalProperties: false
-      required: [type, id, text]
+      required: [type, text]
       properties:
         type:
           const: sendAgentMessage
         id:
           type: integer
+        taskId:
+          type: string
+          description: Address the chat by task instead of office agent id.
         text:
           type: string
 
@@ -1431,12 +1496,15 @@ components:
       description: Stop a task agent's current turn; the session stays open. Privileged.
       type: object
       additionalProperties: false
-      required: [type, id]
+      required: [type]
       properties:
         type:
           const: interruptAgent
         id:
           type: integer
+        taskId:
+          type: string
+          description: Address the chat by task instead of office agent id.
 
     UsageTotals:
       description: Token and cost totals. costUsd is an estimate; absent when unknown.
@@ -1534,6 +1602,9 @@ components:
         sessionId:
           type: string
           description: Claude session id of the task's agent; links office agents to tasks.
+        parentTaskId:
+          type: string
+          description: The task this one branched from (New branch from here).
         usage:
           $ref: '#/components/schemas/UsageTotals'
         changes:

@@ -12,18 +12,18 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 test('the bundled store room has 12 shelves: 4 on the wall first, then the floor rows', () => {
   const layout = JSON.parse(
-    readFileSync(path.join(root, 'public/assets/default-layout-3.json'), 'utf8'),
+    readFileSync(path.join(root, 'public/assets/default-layout-4.json'), 'utf8'),
   ) as OfficeLayout;
   const shelves = projectShelves(layout);
   assert.equal(shelves.length, 12);
   assert.deepEqual(
     shelves.slice(0, 5).map((s) => [s.row, s.col]),
     [
-      [21, 1],
-      [21, 7],
-      [21, 9],
       [21, 11],
-      [25, 2],
+      [21, 17],
+      [21, 19],
+      [21, 21],
+      [25, 12],
     ],
   );
 });
@@ -42,4 +42,17 @@ test('shelves outside the Project Directory area are ignored', () => {
     areaTiles: Array.from({ length: 16 }, (_, i) => (i % 4 < 2 ? 'Project Directory' : null)),
   };
   assert.deepEqual(projectShelves(layout), [{ col: 0, row: 2, width: 2 }]);
+});
+
+test('the bundled Tasks room has Live over All, left of the Dev Team and Project Directory', async () => {
+  const { areaBounds } = await import('../src/office/layout/projectShelves.js');
+  const layout = JSON.parse(
+    readFileSync(path.join(root, 'public/assets/default-layout-4.json'), 'utf8'),
+  ) as OfficeLayout;
+  const live = areaBounds(layout, 'Live Tasks');
+  const all = areaBounds(layout, 'All Tasks');
+  const dev = areaBounds(layout, 'Dev Team');
+  assert.deepEqual(live, { minCol: 1, maxCol: 9, minRow: 11, maxRow: 20 });
+  assert.deepEqual(all, { minCol: 1, maxCol: 9, minRow: 23, maxRow: 32 });
+  assert.ok(dev && dev.minCol > live!.maxCol);
 });
