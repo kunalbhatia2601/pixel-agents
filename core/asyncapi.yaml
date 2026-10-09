@@ -126,6 +126,7 @@ components:
         - $ref: '#/components/schemas/ActionError'
         - $ref: '#/components/schemas/AgentDefaultsLoaded'
         - $ref: '#/components/schemas/AgentChat'
+        - $ref: '#/components/schemas/FolderPicked'
       discriminator: type
 
     ClientMessage:
@@ -162,6 +163,7 @@ components:
         - $ref: '#/components/schemas/UnwatchAgentChat'
         - $ref: '#/components/schemas/SendAgentMessage'
         - $ref: '#/components/schemas/InterruptAgent'
+        - $ref: '#/components/schemas/PickFolder'
       discriminator: type
 
     # ── Server message variants ────────────────────────────────────
@@ -1234,24 +1236,19 @@ components:
             type: string
 
     Project:
+      description: A workspace of one or more repos (like a VS Code multi-root workspace).
       type: object
       additionalProperties: false
-      required: [id, name, repoPath, defaultBranch]
+      required: [id, name, repos]
       properties:
         id:
           type: string
         name:
           type: string
-        repoPath:
-          type: string
-        defaultBranch:
-          type: string
-        setupCommand:
-          type: string
-          description: Run in each new worktree before the agent starts (e.g. npm ci).
-        testCommand:
-          type: string
-          description: How to verify changes; given to the agent.
+        repos:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProjectRepo'
         dir:
           type: string
           description: Server-filled. The project's folder holding docs/ and memory/.
@@ -1356,6 +1353,30 @@ components:
           type: boolean
           description: True for task agents this server runs (messages + interrupt allowed).
 
+    PickFolder:
+      description: Open the native folder dialog on the server's machine. Privileged.
+      type: object
+      additionalProperties: false
+      required: [type, requestId]
+      properties:
+        type:
+          const: pickFolder
+        requestId:
+          type: string
+
+    FolderPicked:
+      description: Result of pickFolder; no path when cancelled.
+      type: object
+      additionalProperties: false
+      required: [type, requestId]
+      properties:
+        type:
+          const: folderPicked
+        requestId:
+          type: string
+        path:
+          type: string
+
     SaveAgentDefaults:
       description: Replace the global agent settings. Privileged.
       type: object
@@ -1416,6 +1437,26 @@ components:
       type: string
       enum: [preparing, running, done, failed, stopped]
 
+    ProjectRepo:
+      description: One repo of a project; each task gets a worktree of it in a folder named `name`.
+      type: object
+      additionalProperties: false
+      required: [name, path, defaultBranch]
+      properties:
+        name:
+          type: string
+          description: Folder name inside the task's workspace (e.g. frontend).
+        path:
+          type: string
+        defaultBranch:
+          type: string
+        setupCommand:
+          type: string
+          description: Run in the repo's new worktree before the agent starts (e.g. npm ci).
+        testCommand:
+          type: string
+          description: How to verify changes in this repo; given to the agent.
+
     Task:
       type: object
       additionalProperties: false
@@ -1433,6 +1474,7 @@ components:
           type: string
         worktree:
           type: string
+          description: The agent's working folder (the repo worktree, or the folder holding one per repo).
         error:
           type: string
         createdAt:

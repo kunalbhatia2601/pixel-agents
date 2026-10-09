@@ -45,7 +45,8 @@ export type ServerMessage =
   | PermissionResolved
   | ActionError
   | AgentDefaultsLoaded
-  | AgentChat;
+  | AgentChat
+  | FolderPicked;
 
 export type ClientMessage =
   | WebviewReady
@@ -79,7 +80,8 @@ export type ClientMessage =
   | WatchAgentChat
   | UnwatchAgentChat
   | SendAgentMessage
-  | InterruptAgent;
+  | InterruptAgent
+  | PickFolder;
 
 export interface ProviderCapabilities {
   type: 'providerCapabilities';
@@ -340,12 +342,17 @@ export interface ProjectsLoaded {
 export interface Project {
   id: string;
   name: string;
-  repoPath: string;
+  repos: ProjectRepo[];
+  dir?: string;
+  agent?: AgentSettings;
+}
+
+export interface ProjectRepo {
+  name: string;
+  path: string;
   defaultBranch: string;
   setupCommand?: string;
   testCommand?: string;
-  dir?: string;
-  agent?: AgentSettings;
 }
 
 export interface AgentSettings {
@@ -433,6 +440,12 @@ export interface ChatEntry {
 }
 
 export type ChatEntryKind = 'user' | 'assistant' | 'thinking' | 'tool' | 'toolResult';
+
+export interface FolderPicked {
+  type: 'folderPicked';
+  requestId: string;
+  path?: string;
+}
 
 export interface WebviewReady {
   type: 'webviewReady';
@@ -604,4 +617,9 @@ export interface SendAgentMessage {
 export interface InterruptAgent {
   type: 'interruptAgent';
   id: number;
+}
+
+export interface PickFolder {
+  type: 'pickFolder';
+  requestId: string;
 }

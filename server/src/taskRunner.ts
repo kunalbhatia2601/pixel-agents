@@ -5,7 +5,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { promisify } from 'util';
 
-import type { AgentSettings, Project, Task } from '../../core/src/messages.js';
+import type { AgentSettings, Project, ProjectRepo, Task } from '../../core/src/messages.js';
 import { normalizeProjectPath } from '../../core/src/normalizeProjectPath.js';
 import type { AgentRuntime } from './agentRuntime.js';
 import type { AgentStateStore } from './agentStateStore.js';
@@ -82,6 +82,11 @@ export function inputQueue() {
       }
     },
   };
+}
+
+/** A repo's worktree for a task: the task folder itself for one repo, a subfolder per repo otherwise. */
+function repoWorktree(task: Task, project: Project, repo: ProjectRepo): string {
+  return project.repos.length > 1 ? path.join(task.worktree!, repo.name) : task.worktree!;
 }
 
 /** Where Claude Code writes transcripts for sessions started in `cwd`. */
@@ -316,23 +321,26 @@ export class TaskRunner {
     }
   }
 
+  /** One worktree per repo, all on the task's branch. */
   private async prepareWorktree(task: Task, project: Project): Promise<void> {
-    const git = (...args: string[]) => run('git', ['-C', project.repoPath, ...args]);
-    let base = project.defaultBranch;
-    try {
-      await git('fetch', 'origin', project.defaultBranch);
-      base = `origin/${project.defaultBranch}`;
-    } catch {
-      // No remote (or offline): branch from the local default branch.
-      console.warn(`[Pixel Agents] Task ${task.id}: fetch failed, using local ${base}`);
-    }
-    fs.mkdirSync(path.dirname(task.worktree!), { recursive: true });
-    await git('worktree', 'add', '-b', task.branch!, task.worktree!, base);
-    if (project.setupCommand) {
-      await run('sh', ['-c', project.setupCommand], {
-        cwd: task.worktree,
-        timeout: SETUP_TIMEOUT_MS,
-      });
+    for (const repo of project.repos) {
+      const git = (...args: string[]) => run('git', ['-C', repo.path, ...args]);
+      const dest = repoWorktree(task, project, repo);
+      let base = repo.defaultBranch;
+      try {
+        await git('fetch', 'origin', repo.defaultBranch);
+        base = `origin/${repo.defaultBranch}`;
+      } catch {
+        // No remote (or offline): branch from the local default branch.
+        console.warn(
+          `[Pixel Agents] Task ${task.id}: fetch failed for ${repo.name}, using ${base}`,
+        );
+      }
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      await git('worktree', 'add', '-b', task.branch!, dest, base);
+      if (repo.setupCommand) {
+        await run('sh', ['-c', repo.setupCommand], { cwd: dest, timeout: SETUP_TIMEOUT_MS });
+      }
     }
   }
 
@@ -340,12 +348,22 @@ export class TaskRunner {
   private brief(task: Task, project: Project): string {
     const docs = listProjectFiles(project, 'docs');
     const memory = listProjectFiles(project, 'memory');
+    const multi = project.repos.length > 1;
     const lines = [
       `# Project: ${project.name}`,
-      `You are working on the task "${task.title}" in a dedicated git worktree on branch \`${task.branch}\`, created from \`${project.defaultBranch}\`.`,
-      'Commit your work to this branch with clear messages. Do not push, merge, or switch branches.',
+      multi
+        ? `You are working on the task "${task.title}". Your working folder holds one git worktree per repo, each on branch \`${task.branch}\`:`
+        : `You are working on the task "${task.title}" in a dedicated git worktree on branch \`${task.branch}\`, created from \`${project.repos[0].defaultBranch}\`.`,
     ];
-    if (project.testCommand) lines.push(`Verify your changes with: \`${project.testCommand}\``);
+    for (const repo of project.repos) {
+      const where = multi ? `- \`${repo.name}/\` (from \`${repo.defaultBranch}\`)` : '';
+      const verify = repo.testCommand ? `verify with \`${repo.testCommand}\`` : '';
+      if (multi) lines.push([where, verify].filter(Boolean).join(': '));
+      else if (verify) lines.push(`Verify your changes with: \`${repo.testCommand}\``);
+    }
+    lines.push(
+      'Commit your work to the task branch with clear messages. Do not push, merge, or switch branches.',
+    );
     if (docs.length) {
       lines.push(
         '',

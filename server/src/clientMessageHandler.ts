@@ -1,3 +1,5 @@
+import { execFile } from 'child_process';
+
 import type { AgentSettings, Project } from '../../core/src/messages.js';
 import type { HookProvider } from '../../core/src/provider.js';
 import { resendAgentActivity } from './agentActivityResend.js';
@@ -296,6 +298,7 @@ export function handleClientMessage(
     case 'unwatchAgentChat':
     case 'sendAgentMessage':
     case 'interruptAgent':
+    case 'pickFolder':
       handleTaskMessage(msg, send, ctx);
       break;
 
@@ -463,6 +466,23 @@ function handleTaskMessage(
             }),
           ),
         );
+        break;
+      }
+      case 'pickFolder': {
+        const requestId = String(msg.requestId);
+        // shortcut: native dialog on macOS only (the server runs on the user's Mac); elsewhere the path is typed.
+        if (process.platform !== 'darwin') {
+          send({ type: 'folderPicked', requestId });
+          throw new Error('Folder picker needs macOS here; type the path instead.');
+        }
+        // Asking the frontmost app (the browser) puts the dialog in front of it.
+        const script =
+          'tell application (path to frontmost application as text) to POSIX path of (choose folder with prompt "Choose a repo folder")';
+        execFile('osascript', ['-e', script], (err, stdout) => {
+          // A cancelled dialog exits non-zero: answer with no path.
+          const picked = err ? undefined : stdout.trim().replace(/\/$/, '') || undefined;
+          send({ type: 'folderPicked', requestId, path: picked });
+        });
         break;
       }
       case 'unwatchAgentChat':

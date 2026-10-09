@@ -3,6 +3,13 @@ import { useEffect, useState } from 'react';
 import type { AgentSettings, PermissionAsked, Project, Task } from '../../../core/src/messages.js';
 import { transport } from '../transport/index.js';
 
+/** Blank form for a new project: one empty repo. */
+export const NEW_PROJECT: Project = {
+  id: '',
+  name: '',
+  repos: [{ name: '', path: '', defaultBranch: 'main' }],
+};
+
 export interface TasksState {
   projects: Project[];
   tasks: Task[];

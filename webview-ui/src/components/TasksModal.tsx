@@ -43,9 +43,12 @@ export function TasksModal({ isOpen, onClose, projects, tasks, onOpenProjects }:
       <div className="flex flex-col gap-8 px-10 pb-8 max-h-[75vh] overflow-y-auto">
         {projects.length === 0 ? (
           <div className="flex flex-col gap-4">
-            <p className="text-text-muted">Add a project first.</p>
+            <p className="text-text-muted">
+              Add a project first: click &quot;+ Add project&quot; on a shelf in the Project
+              Directory room.
+            </p>
             <Button variant="accent" onClick={onOpenProjects}>
-              Open Project Room
+              Add project
             </Button>
           </div>
         ) : (
@@ -59,7 +62,7 @@ export function TasksModal({ isOpen, onClose, projects, tasks, onOpenProjects }:
               >
                 {projects.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.name} ({p.defaultBranch})
+                    {p.name} ({p.repos.map((r) => r.name).join(' + ')})
                   </option>
                 ))}
               </select>

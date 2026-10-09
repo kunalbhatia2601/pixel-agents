@@ -14,7 +14,6 @@ interface BottomToolbarProps {
   onToggleSettings: () => void;
   workspaceFolders: WorkspaceFolder[];
   onOpenTasks: () => void;
-  onOpenProjects: () => void;
 }
 
 export function BottomToolbar({
@@ -25,7 +24,6 @@ export function BottomToolbar({
   onToggleSettings,
   workspaceFolders,
   onOpenTasks,
-  onOpenProjects,
 }: BottomToolbarProps) {
   const [isFolderPickerOpen, setIsFolderPickerOpen] = useState(false);
   const [isBypassMenuOpen, setIsBypassMenuOpen] = useState(false);
@@ -88,15 +86,11 @@ export function BottomToolbar({
   return (
     <div className="absolute bottom-10 left-10 z-20 flex items-center gap-4 pixel-panel p-4">
       {/* Standalone: agents are started as tasks in a project's worktree, not in a terminal */}
+      {/* Projects live on the Project Directory room's shelves, not in the toolbar */}
       {isBrowserRuntime && (
-        <>
-          <Button variant="accent" onClick={onOpenTasks}>
-            + Task
-          </Button>
-          <Button onClick={onOpenProjects} title="Saved projects, docs and memory">
-            Projects
-          </Button>
-        </>
+        <Button variant="accent" onClick={onOpenTasks}>
+          + Task
+        </Button>
       )}
       {!isBrowserRuntime && (
         <div

@@ -31,43 +31,81 @@ describe('projects', () => {
     fs.rmSync(tempHome, { recursive: true, force: true });
   });
 
+  const r = (over: Record<string, string> = {}) => ({
+    name: '',
+    path: repo,
+    defaultBranch: 'develop',
+    ...over,
+  });
+
   it('creates, lists, updates and deletes a project with docs/ and memory/ folders', () => {
-    const created = saveProject({
-      id: '',
-      name: ' Svc ',
-      repoPath: '~/repo',
-      defaultBranch: 'develop',
-    });
+    const created = saveProject({ id: '', name: ' Svc ', repos: [r({ path: '~/repo' })] });
     expect(created.name).toBe('Svc');
-    expect(created.repoPath).toBe(repo);
+    expect(created.repos).toEqual([{ name: 'repo', path: repo, defaultBranch: 'develop' }]);
     expect(fs.existsSync(path.join(created.dir!, 'docs'))).toBe(true);
     expect(listProjects().map((p) => p.id)).toEqual([created.id]);
 
     fs.writeFileSync(path.join(created.dir!, 'docs', 'arch.md'), '# arch');
     expect(listProjectFiles(created, 'docs')).toEqual(['arch.md']);
 
-    saveProject({ ...created, testCommand: 'npm test' });
-    expect(getProject(created.id)?.testCommand).toBe('npm test');
+    saveProject({ ...created, repos: [r({ testCommand: 'npm test' })] });
+    expect(getProject(created.id)?.repos[0].testCommand).toBe('npm test');
 
     deleteProject(created.id);
     expect(listProjects()).toEqual([]);
     expect(fs.existsSync(repo)).toBe(true);
   });
 
+  it('holds several repos as a workspace, with unique folder names', () => {
+    const p = saveProject({
+      id: '',
+      name: 'XYZ',
+      repos: [r({ name: 'Front End' }), r({ name: 'backend' })],
+    });
+    expect(p.repos.map((x) => x.name)).toEqual(['front-end', 'backend']);
+    expect(() =>
+      saveProject({ id: '', name: 'XYZ', repos: [r({ name: 'api' }), r({ name: 'API' })] }),
+    ).toThrow(/share the folder name "api"/);
+    expect(() => saveProject({ id: '', name: 'XYZ', repos: [] })).toThrow(/at least one repo/);
+  });
+
+  it('reads a pre-workspace single-repo project.json as one repo', () => {
+    const p = saveProject({ id: '', name: 'Old', repos: [r()] });
+    fs.writeFileSync(
+      path.join(p.dir!, 'project.json'),
+      JSON.stringify({
+        id: p.id,
+        name: 'Old',
+        repoPath: repo,
+        defaultBranch: 'develop',
+        testCommand: 't',
+      }),
+    );
+    expect(getProject(p.id)?.repos).toEqual([
+      {
+        name: 'repo',
+        path: repo,
+        defaultBranch: 'develop',
+        setupCommand: undefined,
+        testCommand: 't',
+      },
+    ]);
+  });
+
   it('rejects a path that is not a git repo, and a missing branch', () => {
     expect(() =>
-      saveProject({ id: '', name: 'x', repoPath: tempHome + '/nope', defaultBranch: 'main' }),
+      saveProject({ id: '', name: 'x', repos: [r({ path: tempHome + '/nope' })] }),
     ).toThrow(/Not a git repository/);
-    expect(() => saveProject({ id: '', name: 'x', repoPath: repo, defaultBranch: 'main' })).toThrow(
+    expect(() => saveProject({ id: '', name: 'x', repos: [r({ defaultBranch: 'main' })] })).toThrow(
       /Branch "main" not found/,
     );
   });
 
   it('refuses ids that could escape the projects folder', () => {
     expect(() => deleteProject('../../.ssh')).toThrow(/Invalid project id/);
-    expect(() =>
-      saveProject({ id: '../evil', name: 'x', repoPath: repo, defaultBranch: 'develop' }),
-    ).toThrow(/Invalid project id/);
+    expect(() => saveProject({ id: '../evil', name: 'x', repos: [r()] })).toThrow(
+      /Invalid project id/,
+    );
   });
 });
 

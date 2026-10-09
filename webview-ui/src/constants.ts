@@ -312,3 +312,14 @@ export const PET_THUMB_SCALE_MARGIN = 0.85;
 export const EMPTY_SPRITE_THUMBNAIL_BG = '#333';
 /** Maximum string length for a PlacedPet.id (defends against pathologically-long layout entries). */
 export const MAX_PET_ID_LENGTH = 128;
+
+// ── Project Directory (store room) ─────────────────────────────
+/** Area label of the store room whose shelves show the projects. */
+export const PROJECT_DIRECTORY_AREA = 'Project Directory';
+/** Furniture types that act as project shelves there, with their width in tiles. */
+export const PROJECT_SHELF_WIDTHS: Readonly<Record<string, number>> = {
+  BOOKSHELF: 2,
+  DOUBLE_BOOKSHELF: 2,
+};
+/** Rows above the room's floor where wall-mounted shelves still count as inside it. */
+export const PROJECT_SHELF_WALL_ROWS = 2;

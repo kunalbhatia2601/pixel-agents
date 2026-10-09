@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import type { Project } from '../../core/src/messages.js';
 import { toMajorMinor } from './changelogData.js';
 import { AgentChatModal } from './components/AgentChatModal.js';
 import { BottomToolbar } from './components/BottomToolbar.js';
@@ -21,8 +22,9 @@ import { useEditorActions } from './hooks/useEditorActions.js';
 import { useEditorKeyboard } from './hooks/useEditorKeyboard.js';
 import { useExtensionMessages } from './hooks/useExtensionMessages.js';
 import { useIntroTour } from './hooks/useIntroTour.js';
-import { useTasks } from './hooks/useTasks.js';
+import { NEW_PROJECT, useTasks } from './hooks/useTasks.js';
 import { OfficeCanvas } from './office/components/OfficeCanvas.js';
+import { ProjectShelves } from './office/components/ProjectShelves.js';
 import { ToolOverlay } from './office/components/ToolOverlay.js';
 import { EditorState } from './office/editor/editorState.js';
 import { EditorToolbar } from './office/editor/EditorToolbar.js';
@@ -68,7 +70,12 @@ function App() {
   // Before useExtensionMessages: its effect sends webviewReady, whose replies this listens for.
   const taskState = useTasks();
   const [isTasksOpen, setIsTasksOpen] = useState(false);
-  const [isProjectsOpen, setIsProjectsOpen] = useState(false);
+  // null = closed. Opened from the store room's shelves: straight into a project, a new one, or the list.
+  const [projectsView, setProjectsView] = useState<{ edit: Project | null; key: number } | null>(
+    null,
+  );
+  const openProjects = (edit: Project | null) => setProjectsView({ edit, key: Date.now() });
+  const isProjectsOpen = projectsView !== null;
   const [chatAgentId, setChatAgentId] = useState<number | null>(null);
 
   const isEditDirty = useCallback(
@@ -449,6 +456,19 @@ function App() {
             onCloseAgent={handleCloseAgent}
             alwaysShowOverlay={alwaysShowOverlay}
           />
+
+          {isBrowserRuntime && !editor.isEditMode && (
+            <ProjectShelves
+              officeState={officeState}
+              containerRef={containerRef}
+              zoom={editor.zoom}
+              panRef={editor.panRef}
+              projects={taskState.projects}
+              onOpenProject={(p) => openProjects(p)}
+              onAddProject={() => openProjects(NEW_PROJECT)}
+              onOpenDirectory={() => openProjects(null)}
+            />
+          )}
         </>
       ) : (
         <DebugView
@@ -531,7 +551,6 @@ function App() {
         onToggleSettings={() => setIsSettingsOpen((v) => !v)}
         workspaceFolders={workspaceFolders}
         onOpenTasks={() => setIsTasksOpen(true)}
-        onOpenProjects={() => setIsProjectsOpen(true)}
       />
 
       <TasksModal
@@ -541,13 +560,15 @@ function App() {
         tasks={taskState.tasks}
         onOpenProjects={() => {
           setIsTasksOpen(false);
-          setIsProjectsOpen(true);
+          openProjects(NEW_PROJECT);
         }}
       />
 
       <ProjectRoomModal
+        key={projectsView?.key}
+        initialEdit={projectsView?.edit ?? null}
         isOpen={isProjectsOpen}
-        onClose={() => setIsProjectsOpen(false)}
+        onClose={() => setProjectsView(null)}
         projects={taskState.projects}
         agentDefaults={taskState.agentDefaults}
       />

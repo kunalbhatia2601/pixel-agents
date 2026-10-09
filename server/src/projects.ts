@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import type { AgentSettings, Project } from '../../core/src/messages.js';
+import type { AgentSettings, Project, ProjectRepo } from '../../core/src/messages.js';
 import { SERVER_JSON_DIR } from './constants.js';
 
 /** Project Room storage: ~/.pixel-agents/projects/<id>/{project.json,docs/,memory/}. */
@@ -33,23 +33,36 @@ export function listProjects(): Project[] {
   return projects.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** Single-repo project.json files written before workspaces existed. */
+interface LegacyProject {
+  repoPath?: string;
+  defaultBranch?: string;
+  setupCommand?: string;
+  testCommand?: string;
+}
+
 export function getProject(id: string): Project | null {
   try {
     const dir = projectDir(id);
-    const project = JSON.parse(fs.readFileSync(path.join(dir, 'project.json'), 'utf-8')) as Project;
+    const raw = JSON.parse(fs.readFileSync(path.join(dir, 'project.json'), 'utf-8')) as Project &
+      LegacyProject;
+    const { repoPath, defaultBranch, setupCommand, testCommand, ...project } = raw;
+    if (!project.repos && repoPath && defaultBranch) {
+      project.repos = [
+        { name: path.basename(repoPath), path: repoPath, defaultBranch, setupCommand, testCommand },
+      ];
+    }
     return { ...project, id, dir };
   } catch {
     return null;
   }
 }
 
-/** Validates the repo + branch, then writes atomically. Empty id = create. */
-export function saveProject(input: Project): Project {
-  const name = input.name.trim();
-  const repoPath = path.resolve(input.repoPath.trim().replace(/^~(?=$|\/)/, os.homedir()));
+function validateRepo(input: ProjectRepo): ProjectRepo {
+  const repoPath = path.resolve(input.path.trim().replace(/^~(?=$|\/)/, os.homedir()));
   const defaultBranch = input.defaultBranch.trim();
-  if (!name) throw new Error('Project name is required');
-  if (!defaultBranch) throw new Error('Default branch is required');
+  const name = slugify(input.name || path.basename(repoPath));
+  if (!defaultBranch) throw new Error(`Default branch is required for ${repoPath}`);
   try {
     execFileSync('git', ['-C', repoPath, 'rev-parse', '--git-dir'], { stdio: 'ignore' });
   } catch {
@@ -62,20 +75,41 @@ export function saveProject(input: Project): Project {
   } catch {
     throw new Error(`Branch "${defaultBranch}" not found in ${repoPath}`);
   }
+  return {
+    name,
+    path: repoPath,
+    defaultBranch,
+    setupCommand: input.setupCommand?.trim() || undefined,
+    testCommand: input.testCommand?.trim() || undefined,
+  };
+}
+
+/** Folder-safe repo name: it becomes a directory inside each task's workspace. */
+export function slugify(text: string): string {
+  return (
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 40) || 'repo'
+  );
+}
+
+/** Validates every repo + branch, then writes atomically. Empty id = create. */
+export function saveProject(input: Project): Project {
+  const name = input.name.trim();
+  if (!name) throw new Error('Project name is required');
+  if (!input.repos?.length) throw new Error('Add at least one repo');
+  const repos = input.repos.map(validateRepo);
+  const names = repos.map((r) => r.name);
+  const dup = names.find((n, i) => names.indexOf(n) !== i);
+  if (dup) throw new Error(`Two repos would share the folder name "${dup}"; rename one`);
 
   const id = input.id || crypto.randomUUID();
   const dir = projectDir(id);
   fs.mkdirSync(path.join(dir, 'docs'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'memory'), { recursive: true });
-  const project: Project = {
-    id,
-    name,
-    repoPath,
-    defaultBranch,
-    setupCommand: input.setupCommand?.trim() || undefined,
-    testCommand: input.testCommand?.trim() || undefined,
-    agent: cleanAgentSettings(input.agent),
-  };
+  const project: Project = { id, name, repos, agent: cleanAgentSettings(input.agent) };
   writeJson(path.join(dir, 'project.json'), project);
   return { ...project, dir };
 }

@@ -2,7 +2,7 @@
     "version": 1,
     "cols": 30,
     "rows": 33,
-    "layoutRevision": 2,
+    "layoutRevision": 3,
     "tiles": [
         255,
         255,
@@ -5704,192 +5704,156 @@
         },
         {
             "uid": "f-rooms-29",
-            "type": "TABLE_FRONT",
-            "col": 4,
+            "type": "DOUBLE_BOOKSHELF",
+            "col": 2,
             "row": 25
         },
         {
             "uid": "f-rooms-30",
-            "type": "PC_SIDE",
-            "col": 4,
+            "type": "DOUBLE_BOOKSHELF",
+            "col": 5,
             "row": 25
         },
         {
             "uid": "f-rooms-31",
-            "type": "PC_SIDE:left",
-            "col": 6,
+            "type": "DOUBLE_BOOKSHELF",
+            "col": 8,
             "row": 25
         },
         {
             "uid": "f-rooms-32",
-            "type": "PC_SIDE",
-            "col": 4,
-            "row": 27
+            "type": "DOUBLE_BOOKSHELF",
+            "col": 11,
+            "row": 25
         },
         {
             "uid": "f-rooms-33",
-            "type": "PC_SIDE:left",
-            "col": 6,
-            "row": 27
+            "type": "DOUBLE_BOOKSHELF",
+            "col": 2,
+            "row": 29
         },
         {
             "uid": "f-rooms-34",
-            "type": "WOODEN_CHAIR_SIDE",
-            "col": 3,
-            "row": 25
+            "type": "DOUBLE_BOOKSHELF",
+            "col": 5,
+            "row": 29
         },
         {
             "uid": "f-rooms-35",
-            "type": "WOODEN_CHAIR_SIDE",
-            "col": 3,
-            "row": 27
+            "type": "DOUBLE_BOOKSHELF",
+            "col": 8,
+            "row": 29
         },
         {
             "uid": "f-rooms-36",
-            "type": "WOODEN_CHAIR_SIDE:left",
-            "col": 7,
-            "row": 25
-        },
-        {
-            "uid": "f-rooms-37",
-            "type": "WOODEN_CHAIR_SIDE:left",
-            "col": 7,
-            "row": 27
-        },
-        {
-            "uid": "f-rooms-38",
-            "type": "SOFA_FRONT",
-            "col": 11,
-            "row": 26
-        },
-        {
-            "uid": "f-rooms-39",
-            "type": "SOFA_SIDE",
-            "col": 10,
-            "row": 27
-        },
-        {
-            "uid": "f-rooms-40",
-            "type": "COFFEE_TABLE",
-            "col": 11,
-            "row": 27
-        },
-        {
-            "uid": "f-rooms-41",
-            "type": "SOFA_SIDE:left",
-            "col": 13,
-            "row": 27
-        },
-        {
-            "uid": "f-rooms-42",
-            "type": "SOFA_BACK",
+            "type": "DOUBLE_BOOKSHELF",
             "col": 11,
             "row": 29
         },
         {
-            "uid": "f-rooms-43",
-            "type": "COFFEE",
-            "col": 11,
-            "row": 28
-        },
-        {
-            "uid": "f-rooms-44",
-            "type": "LARGE_PLANT",
-            "col": 1,
-            "row": 30
-        },
-        {
-            "uid": "f-rooms-45",
+            "uid": "f-rooms-37",
             "type": "PLANT",
             "col": 15,
             "row": 30
         },
         {
-            "uid": "f-rooms-46",
+            "uid": "f-rooms-38",
+            "type": "CACTUS",
+            "col": 1,
+            "row": 31
+        },
+        {
+            "uid": "f-rooms-39",
+            "type": "BIN",
+            "col": 15,
+            "row": 23
+        },
+        {
+            "uid": "f-rooms-40",
             "type": "LARGE_PAINTING",
             "col": 19,
             "row": 21
         },
         {
-            "uid": "f-rooms-47",
+            "uid": "f-rooms-41",
             "type": "SMALL_PAINTING_2",
             "col": 26,
             "row": 21
         },
         {
-            "uid": "f-rooms-48",
+            "uid": "f-rooms-42",
             "type": "HANGING_PLANT",
             "col": 28,
             "row": 21
         },
         {
-            "uid": "f-rooms-49",
+            "uid": "f-rooms-43",
             "type": "DESK_FRONT",
             "col": 20,
             "row": 25
         },
         {
-            "uid": "f-rooms-50",
+            "uid": "f-rooms-44",
             "type": "PC_FRONT_OFF",
             "col": 21,
             "row": 25
         },
         {
-            "uid": "f-rooms-51",
+            "uid": "f-rooms-45",
             "type": "CUSHIONED_CHAIR_BACK",
             "col": 21,
             "row": 27
         },
         {
-            "uid": "f-rooms-52",
+            "uid": "f-rooms-46",
             "type": "COFFEE",
             "col": 23,
             "row": 25
         },
         {
-            "uid": "f-rooms-53",
+            "uid": "f-rooms-47",
             "type": "SOFA_FRONT",
             "col": 25,
             "row": 28
         },
         {
-            "uid": "f-rooms-54",
+            "uid": "f-rooms-48",
             "type": "SOFA_SIDE",
             "col": 24,
             "row": 29
         },
         {
-            "uid": "f-rooms-55",
+            "uid": "f-rooms-49",
             "type": "COFFEE_TABLE",
             "col": 25,
             "row": 29
         },
         {
-            "uid": "f-rooms-56",
+            "uid": "f-rooms-50",
             "type": "SOFA_SIDE:left",
             "col": 27,
             "row": 29
         },
         {
-            "uid": "f-rooms-57",
+            "uid": "f-rooms-51",
             "type": "SOFA_BACK",
             "col": 25,
             "row": 31
         },
         {
-            "uid": "f-rooms-58",
+            "uid": "f-rooms-52",
             "type": "LARGE_PLANT",
             "col": 17,
             "row": 30
         },
         {
-            "uid": "f-rooms-59",
+            "uid": "f-rooms-53",
             "type": "PLANT_2",
             "col": 28,
             "row": 23
         },
         {
-            "uid": "f-rooms-60",
+            "uid": "f-rooms-54",
             "type": "BIN",
             "col": 28,
             "row": 32
