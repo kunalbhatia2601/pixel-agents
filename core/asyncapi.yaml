@@ -1212,6 +1212,8 @@ components:
         fromTaskId:
           type: string
           description: Branching from this task (New branch from here); recorded as parentTaskId.
+        branchMode:
+          $ref: '#/components/schemas/BranchMode'
         carryContext:
           type: boolean
           description: With fromTaskId, the new agent starts as a copy of that task's conversation.
@@ -1548,6 +1550,11 @@ components:
         removed:
           type: number
 
+    BranchMode:
+      description: auto = a small model decides whether the task changes code (branch) or not (read-only in the checkout).
+      type: string
+      enum: [auto, branch, none]
+
     TaskStatus:
       type: string
       enum: [preparing, running, done, failed, stopped]
@@ -1605,6 +1612,14 @@ components:
         parentTaskId:
           type: string
           description: The task this one branched from (New branch from here).
+        readOnly:
+          type: boolean
+          description: No branch was cut; the agent works read-only in the user's own checkout.
+        baseCommits:
+          type: object
+          description: Repo name -> commit the task's worktree started from; code changes are measured against it.
+          additionalProperties:
+            type: string
         usage:
           $ref: '#/components/schemas/UsageTotals'
         changes:

@@ -147,8 +147,14 @@ export function AgentChatModal({
           </div>
           {task && (
             <span className="text-xs text-text-muted">
-              Branch <span className="font-mono">{task.branch}</span> — messages continue this
-              branch.
+              {task.readOnly ? (
+                <>Read-only, in your checkout (no branch). For changes, use New branch from here.</>
+              ) : (
+                <>
+                  Branch <span className="font-mono">{task.branch}</span> — messages continue this
+                  branch.
+                </>
+              )}
             </span>
           )}
           {!!task?.changedFiles?.length && (

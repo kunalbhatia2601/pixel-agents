@@ -457,6 +457,8 @@ function handleTaskMessage(
           baseBranches: stringRecord(msg.baseBranches),
           fromTaskId: typeof msg.fromTaskId === 'string' ? msg.fromTaskId : undefined,
           carryContext: msg.carryContext === true,
+          branchMode:
+            msg.branchMode === 'branch' || msg.branchMode === 'none' ? msg.branchMode : 'auto',
         });
         break;
       case 'saveAgentDefaults':

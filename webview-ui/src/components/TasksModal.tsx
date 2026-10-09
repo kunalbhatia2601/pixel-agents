@@ -59,7 +59,7 @@ function TaskRow({
         </div>
       </div>
       <span className="text-sm text-text-muted">
-        {projectName} · {task.branch}
+        {projectName} · {task.readOnly ? 'read-only, in your checkout' : task.branch}
         {task.agent && ` · ${describeAgentSettings(task.agent)}`}
       </span>
       {parent && <span className="text-xs text-text-muted">Branched from “{parent.title}”</span>}

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-import type { AgentSettings, Project, Task } from '../../../core/src/messages.js';
+import type { AgentSettings, BranchMode, Project, Task } from '../../../core/src/messages.js';
 import { transport } from '../transport/index.js';
 import { AgentSettingsFields } from './AgentSettingsFields.js';
 import { BranchPicker } from './BranchPicker.js';
@@ -22,6 +22,7 @@ export function NewTaskForm({ projects, fromTask, onStarted, onCancel }: NewTask
   const [prompt, setPrompt] = useState('');
   const [agent, setAgent] = useState<AgentSettings>({});
   const [carryContext, setCarryContext] = useState(!!fromTask?.sessionId);
+  const [branchMode, setBranchMode] = useState<BranchMode>('auto');
   const [baseBranches, setBaseBranches] = useState<Record<string, string>>(() =>
     fromTask?.branch && project
       ? Object.fromEntries(project.repos.map((r) => [r.name, fromTask.branch!]))
@@ -38,6 +39,7 @@ export function NewTaskForm({ projects, fromTask, onStarted, onCancel }: NewTask
       agent,
       baseBranches,
       fromTaskId: fromTask?.id,
+      branchMode: fromTask ? 'branch' : branchMode,
       carryContext: fromTask ? carryContext : undefined,
     });
     onStarted();
@@ -79,7 +81,23 @@ export function NewTaskForm({ projects, fromTask, onStarted, onCancel }: NewTask
           onChange={(e) => setPrompt(e.target.value)}
         />
       </label>
-      {project && (
+      {!fromTask && (
+        <label className="flex flex-col gap-2">
+          Branch
+          <select
+            className={inputClass}
+            value={branchMode}
+            onChange={(e) => setBranchMode(e.target.value as BranchMode)}
+          >
+            <option value="auto">
+              Auto — Haiku decides: changes get a branch, questions don&apos;t
+            </option>
+            <option value="branch">Always cut a branch</option>
+            <option value="none">No branch — read-only, in my checkout</option>
+          </select>
+        </label>
+      )}
+      {project && branchMode !== 'none' && (
         <BranchPicker
           key={project.id}
           project={project}

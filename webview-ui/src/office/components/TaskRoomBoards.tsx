@@ -99,7 +99,7 @@ export function TaskRoomBoards({
                   <button
                     key={t.id}
                     onClick={() => onOpenTask(t)}
-                    title={`${t.title} — ${projectName(t.projectId)} · ${t.branch}`}
+                    title={`${t.title} — ${projectName(t.projectId)} · ${t.readOnly ? 'read-only' : t.branch}`}
                     className="w-full flex flex-col text-left px-4 py-1 border-b border-border cursor-pointer hover:bg-active-bg"
                   >
                     <span className="text-2xs truncate w-full">

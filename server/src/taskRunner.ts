@@ -7,6 +7,7 @@ import { promisify } from 'util';
 
 import type {
   AgentSettings,
+  BranchMode,
   Project,
   ProjectRepo,
   RepoBranches,
@@ -18,6 +19,7 @@ import type { AgentStateStore } from './agentStateStore.js';
 import { SERVER_JSON_DIR } from './constants.js';
 import { cleanAgentSettings, getAgentDefaults, getProject, listProjectFiles } from './projects.js';
 import { CLAUDE_HOOK_EVENTS } from './providers/hook/claude/constants.js';
+import { needsBranch } from './taskRouter.js';
 import { parseNumstat, summarizeChanges, usageFromModelUsage } from './usage.js';
 
 const run = promisify(execFile);
@@ -52,9 +54,13 @@ export interface StartOptions {
   baseBranches?: Record<string, string>;
   fromTaskId?: string;
   carryContext?: boolean;
+  /** auto (default): the router decides; branching from a task always cuts a branch. */
+  branchMode?: BranchMode;
 }
 
 const FETCH_TIMEOUT_MS = 60_000;
+/** Editing tools a read-only task never gets; Bash still asks before anything that writes. */
+const READ_ONLY_DISALLOWED_TOOLS = ['Edit', 'Write', 'NotebookEdit'];
 
 /** Keeps entries for the project's repos only, and refuses names git would read as options. */
 export function cleanBaseBranches(
@@ -122,6 +128,12 @@ export function inputQueue() {
 /** A repo's worktree for a task: the task folder itself for one repo, a subfolder per repo otherwise. */
 function repoWorktree(task: Task, project: Project, repo: ProjectRepo): string {
   return project.repos.length > 1 ? path.join(task.worktree!, repo.name) : task.worktree!;
+}
+
+/** ", started at commit abc1234" — the task's real starting point, whichever branch it was cut from. */
+function startedAt(task: Task, repo: ProjectRepo): string {
+  const sha = task.baseCommits?.[repo.name];
+  return sha ? `, started at commit ${sha.slice(0, 7)}` : '';
 }
 
 /** Where Claude Code writes transcripts for sessions started in `cwd`. */
@@ -233,6 +245,7 @@ export class TaskRunner {
     void this.execute(task, project, prompt.trim(), false, {
       baseBranches,
       forkFrom: opts.carryContext ? parent : undefined,
+      branchMode: parent ? 'branch' : (opts.branchMode ?? 'auto'),
     });
     return task;
   }
@@ -347,12 +360,29 @@ export class TaskRunner {
     project: Project,
     prompt: string,
     resume = false,
-    launch: { baseBranches?: Record<string, string>; forkFrom?: Task } = {},
+    launch: {
+      baseBranches?: Record<string, string>;
+      forkFrom?: Task;
+      branchMode?: BranchMode;
+    } = {},
   ): Promise<void> {
     const abort = new AbortController();
     this.aborts.set(task.id, abort);
     try {
-      if (!resume) await this.prepareWorktree(task, project, launch.baseBranches ?? {});
+      if (!resume) {
+        const mode = launch.branchMode ?? 'branch';
+        const cut =
+          mode === 'branch' || (mode === 'auto' && (await needsBranch(task.title, prompt)));
+        if (cut) {
+          await this.prepareWorktree(task, project, launch.baseBranches ?? {});
+        } else {
+          // Questions and reviews run where the user's work is: their checkout, current branch, uncommitted changes.
+          task.readOnly = true;
+          task.branch = undefined;
+          task.worktree = project.repos[0].path;
+          this.rememberWorktree(task.worktree, project.name);
+        }
+      }
       if (abort.signal.aborted) throw new Error('Stopped');
       const fork = launch.forkFrom;
       if (fork) {
@@ -392,6 +422,7 @@ export class TaskRunner {
         options: {
           cwd: task.worktree,
           ...sessionOptions,
+          ...(task.readOnly ? { disallowedTools: READ_ONLY_DISALLOWED_TOOLS } : {}),
           abortController: abort,
           model: settings.model,
           effort: settings.effort,
@@ -403,8 +434,12 @@ export class TaskRunner {
             preset: 'claude_code',
             append: this.brief(task, project),
           },
-          additionalDirectories: [project.dir!],
-          permissionMode: 'acceptEdits',
+          // Read-only: the other repos are read in place. Branch tasks reach them through the workspace folder.
+          additionalDirectories: [
+            project.dir!,
+            ...(task.readOnly ? project.repos.slice(1).map((r) => r.path) : []),
+          ],
+          permissionMode: task.readOnly ? 'default' : 'acceptEdits',
           canUseTool: (toolName, input, { signal }) =>
             this.askPermission(task, sessionId, toolName, input, signal).then((d) =>
               d.allow
@@ -491,6 +526,7 @@ export class TaskRunner {
 
   /** Diff of every repo against its merge base with the default branch — what a PR would show. */
   private async refreshChanges(task: Task, project: Project): Promise<void> {
+    if (task.readOnly) return; // it works in the user's checkout; its diff is the user's own work
     const files = [];
     for (const repo of project.repos) {
       const git = (...args: string[]) =>
@@ -501,7 +537,9 @@ export class TaskRunner {
           () => remote,
           () => repo.defaultBranch,
         );
-        const base = (await git('merge-base', 'HEAD', ref)).stdout.trim();
+        // The commit the worktree started from; tasks from before it was recorded fall back to the merge base.
+        const base =
+          task.baseCommits?.[repo.name] ?? (await git('merge-base', 'HEAD', ref)).stdout.trim();
         // shortcut: untracked files the agent never staged are not counted; they show once committed.
         const { stdout } = await git('diff', '--numstat', base);
         files.push(...parseNumstat(stdout, project.repos.length > 1 ? `${repo.name}/` : ''));
@@ -541,6 +579,8 @@ export class TaskRunner {
       }
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       await git('worktree', 'add', '-b', task.branch!, dest, base);
+      const started = (await run('git', ['-C', dest, 'rev-parse', 'HEAD'])).stdout.trim();
+      task.baseCommits = { ...task.baseCommits, [repo.name]: started };
       if (repo.setupCommand) {
         await run('sh', ['-c', repo.setupCommand], { cwd: dest, timeout: SETUP_TIMEOUT_MS });
       }
@@ -549,17 +589,28 @@ export class TaskRunner {
 
   /** Appended to Claude Code's system prompt: what this task is and where context lives. */
   private brief(task: Task, project: Project): string {
-    const docs = listProjectFiles(project, 'docs');
-    const memory = listProjectFiles(project, 'memory');
     const multi = project.repos.length > 1;
-    const lines = [
-      `# Project: ${project.name}`,
+    const lines = [`# Project: ${project.name}`];
+    if (task.readOnly) {
+      lines.push(
+        `You are answering the task "${task.title}" directly in the user's own checkout, read-only. No branch was cut because the task only needs looking, not changing.`,
+        ...project.repos.map(
+          (r) =>
+            `- \`${r.name}\`: ${r.path} (whatever branch and uncommitted changes the user has there)`,
+        ),
+        'Do not modify files, stage, commit, stash, switch branches or run anything that writes; file-editing tools are disabled. Inspect with read-only commands (git status, git diff, git log, reading files).',
+        'If the user asks for changes, explain what you would change and tell them to use "New branch from here" on this task, which carries this conversation into a branch where you can edit.',
+      );
+      return this.briefContext(lines, project);
+    }
+    lines.push(
       multi
         ? `You are working on the task "${task.title}". Your working folder holds one git worktree per repo, each on branch \`${task.branch}\`:`
-        : `You are working on the task "${task.title}" in a dedicated git worktree on branch \`${task.branch}\`, created from \`${project.repos[0].defaultBranch}\`.`,
-    ];
+        : `You are working on the task "${task.title}" in a dedicated git worktree on branch \`${task.branch}\`${startedAt(task, project.repos[0])}.`,
+      `This is an isolated copy, not the user's checkout${multi ? 's' : ''} (${project.repos.map((r) => r.path).join(', ')}): their uncommitted changes are not here.`,
+    );
     for (const repo of project.repos) {
-      const where = multi ? `- \`${repo.name}/\` (from \`${repo.defaultBranch}\`)` : '';
+      const where = multi ? `- \`${repo.name}/\`${startedAt(task, repo)}` : '';
       const verify = repo.testCommand ? `verify with \`${repo.testCommand}\`` : '';
       if (multi) lines.push([where, verify].filter(Boolean).join(': '));
       else if (verify) lines.push(`Verify your changes with: \`${repo.testCommand}\``);
@@ -567,6 +618,13 @@ export class TaskRunner {
     lines.push(
       'Commit your work to the task branch with clear messages. Do not push, merge, or switch branches.',
     );
+    return this.briefContext(lines, project);
+  }
+
+  /** Docs, memory and the closing instruction, shared by both kinds of brief. */
+  private briefContext(lines: string[], project: Project): string {
+    const docs = listProjectFiles(project, 'docs');
+    const memory = listProjectFiles(project, 'memory');
     if (docs.length) {
       lines.push(
         '',

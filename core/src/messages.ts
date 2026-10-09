@@ -385,6 +385,8 @@ export interface Task {
   sessionOpen?: boolean;
   sessionId?: string;
   parentTaskId?: string;
+  readOnly?: boolean;
+  baseCommits?: Record<string, string>;
   usage?: UsageTotals;
   changes?: CodeChanges;
   changedFiles?: ChangedFile[];
@@ -621,8 +623,11 @@ export interface StartTask {
   agent?: AgentSettings;
   baseBranches?: Record<string, string>;
   fromTaskId?: string;
+  branchMode?: BranchMode;
   carryContext?: boolean;
 }
+
+export type BranchMode = 'auto' | 'branch' | 'none';
 
 export interface StopTask {
   type: 'stopTask';
