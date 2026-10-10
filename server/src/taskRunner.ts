@@ -16,6 +16,7 @@ import type {
   Task,
 } from '../../core/src/messages.js';
 import { normalizeProjectPath } from '../../core/src/normalizeProjectPath.js';
+import { accountFor, envForAccount } from './accounts.js';
 import type { AgentRuntime } from './agentRuntime.js';
 import type { AgentStateStore } from './agentStateStore.js';
 import { DEV_TEAM_AREA, ensureAreaMapping, QA_AREA } from './areaMappings.js';
@@ -372,6 +373,8 @@ export class TaskRunner {
         ...cleanAgentSettings(opts.agent),
       }),
       parentTaskId: parent?.id,
+      // Resolved once: resumes and follow-ups keep running on the same account.
+      accountId: parent?.accountId ?? accountFor('dev', project),
       pending: {
         kind: 'start',
         baseBranches,
@@ -637,7 +640,9 @@ export class TaskRunner {
       if (!resume) {
         const mode = launch.branchMode ?? 'branch';
         const cut =
-          mode === 'branch' || (mode === 'auto' && (await needsBranch(task.title, prompt)));
+          mode === 'branch' ||
+          (mode === 'auto' &&
+            (await needsBranch(task.title, prompt, envForAccount(accountFor('router', project)))));
         if (cut) {
           await this.prepareWorktree(task, project, launch.baseBranches ?? {});
         } else {
@@ -686,6 +691,7 @@ export class TaskRunner {
         prompt: input.messages(),
         options: {
           cwd: task.worktree,
+          env: envForAccount(task.accountId),
           ...sessionOptions,
           ...(task.readOnly ? { disallowedTools: READ_ONLY_DISALLOWED_TOOLS } : {}),
           abortController: abort,
@@ -903,6 +909,7 @@ export class TaskRunner {
       const sessionId = crypto.randomUUID();
       task.reviewSessionIds = [...(task.reviewSessionIds ?? []), sessionId];
       const settings = cleanAgentSettings({ ...task.agent, ...getReviewerDefaults() }) ?? {};
+      task.reviewAccountId = accountFor('qa', project);
       const brief = reviewerBrief(task, project, {
         reviewDir,
         repoDirs: project.repos.map((r) => ({
@@ -925,6 +932,7 @@ export class TaskRunner {
         prompt: `Review the task "${task.title}" (round ${round}) and return your verdict.`,
         options: {
           cwd: reviewDir,
+          env: envForAccount(task.reviewAccountId),
           sessionId,
           abortController: abort,
           model: settings.model,

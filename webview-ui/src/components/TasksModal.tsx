@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-import type { PermissionAsked, Project, Task } from '../../../core/src/messages.js';
+import type { Account, PermissionAsked, Project, Task } from '../../../core/src/messages.js';
 import { TASK_BOARD_PAGE_SIZE } from '../constants.js';
 import { usePaging } from '../hooks/usePaging.js';
 import {
@@ -33,6 +33,7 @@ interface TasksModalProps {
   projects: Project[];
   tasks: Task[];
   permissions: PermissionAsked[];
+  accounts: Account[];
   onOpenChat: (task: Task) => void;
   onOpenProjects: () => void;
 }
@@ -42,6 +43,7 @@ function TaskRow({
   projectName,
   parent,
   waiting,
+  accountName,
   onOpen,
   onBranch,
 }: {
@@ -49,6 +51,7 @@ function TaskRow({
   projectName: string;
   parent?: Task;
   waiting: number;
+  accountName?: string;
   onOpen: () => void;
   onBranch: () => void;
 }) {
@@ -72,6 +75,7 @@ function TaskRow({
       <span className="text-sm text-text-muted">
         {projectName} · {task.readOnly ? 'read-only, in your checkout' : task.branch}
         {task.agent && ` · ${describeAgentSettings(task.agent)}`}
+        {accountName && ` · on ${accountName}`}
       </span>
       {parent && <span className="text-xs text-text-muted">Branched from “{parent.title}”</span>}
       <UsageSummary usage={taskUsage(task)} changes={task.changes} compact />
@@ -113,6 +117,7 @@ export function TasksModal({
   projects,
   tasks,
   permissions,
+  accounts,
   onOpenChat,
   onOpenProjects,
 }: TasksModalProps) {
@@ -187,6 +192,7 @@ export function TasksModal({
             projectName={projectName(t.projectId)}
             parent={t.parentTaskId ? tasks.find((p) => p.id === t.parentTaskId) : undefined}
             waiting={permissions.filter((p) => p.taskId === t.id).length}
+            accountName={accounts.find((a) => a.id === t.accountId)?.name}
             onOpen={() => onOpenChat(t)}
             onBranch={() => setForm({ fromTask: t })}
           />

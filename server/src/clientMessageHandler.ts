@@ -1,7 +1,22 @@
 import { execFile } from 'child_process';
 
-import type { AgentSettings, PermissionMode, Project, Task } from '../../core/src/messages.js';
+import type {
+  AccountKind,
+  AccountRoles,
+  AgentSettings,
+  PermissionMode,
+  Project,
+  Task,
+} from '../../core/src/messages.js';
 import type { HookProvider } from '../../core/src/provider.js';
+import {
+  deleteAccount,
+  envForAccount,
+  listAccounts,
+  recordTest,
+  saveAccount,
+  setRoles,
+} from './accounts.js';
 import { resendAgentActivity } from './agentActivityResend.js';
 import { ChatTail } from './agentChat.js';
 import { buildAgentDiagnostics } from './agentDiagnostics.js';
@@ -31,6 +46,7 @@ import type { ConsentEffects } from './providers/hook/consentExecutor.js';
 import { applyConsentChoice } from './providers/hook/consentExecutor.js';
 import { hooksConsentRequest } from './providers/hook/consentGate.js';
 import { claudeProvider, hookProviderById, hookProviders } from './providers/index.js';
+import { pingAccount } from './taskRouter.js';
 import type { TaskRunner } from './taskRunner.js';
 
 type WsSend = (message: Record<string, unknown>) => void;
@@ -303,6 +319,10 @@ export function handleClientMessage(
     case 'listBranches':
     case 'setAgentMode':
     case 'completeTask':
+    case 'saveAccount':
+    case 'deleteAccount':
+    case 'testAccount':
+    case 'setAccountRoles':
       handleTaskMessage(msg, send, ctx);
       break;
 
@@ -503,6 +523,32 @@ function handleTaskMessage(
         );
         break;
       }
+      case 'saveAccount':
+        saveAccount({
+          id: String(msg.id ?? ''),
+          name: String(msg.name ?? ''),
+          kind: msg.kind as AccountKind,
+          secret: typeof msg.secret === 'string' ? msg.secret : undefined,
+        });
+        store.broadcast({ type: 'accountsLoaded', ...listAccounts() });
+        break;
+      case 'deleteAccount':
+        deleteAccount(String(msg.id));
+        store.broadcast({ type: 'accountsLoaded', ...listAccounts() });
+        break;
+      case 'setAccountRoles':
+        setRoles((msg.roles ?? {}) as AccountRoles);
+        store.broadcast({ type: 'accountsLoaded', ...listAccounts() });
+        break;
+      case 'testAccount': {
+        const id = String(msg.id);
+        const env = envForAccount(id)!;
+        void pingAccount(env).then((result) => {
+          recordTest(id, { ...result, at: Date.now() });
+          store.broadcast({ type: 'accountsLoaded', ...listAccounts() });
+        });
+        break;
+      }
       case 'completeTask':
         tasks.complete(String(msg.taskId)).catch((err: unknown) =>
           send({
@@ -655,6 +701,7 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
   if (ctx.tasks && ctx.privileged) {
     send({ type: 'projectsLoaded', projects: listProjects() });
     send({ type: 'tasksLoaded', tasks: ctx.tasks.list() });
+    send({ type: 'accountsLoaded', ...listAccounts() });
     send({
       type: 'agentDefaultsLoaded',
       defaults: getAgentDefaults(),

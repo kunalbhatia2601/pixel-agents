@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react';
 
-import type { AgentSettings, PermissionAsked, Project, Task } from '../../../core/src/messages.js';
+import type {
+  Account,
+  AccountRoles,
+  AgentSettings,
+  PermissionAsked,
+  Project,
+  Task,
+} from '../../../core/src/messages.js';
 import { transport } from '../transport/index.js';
 
 /** Blank form for a new project: one empty repo. */
@@ -16,6 +23,8 @@ export interface TasksState {
   permissions: PermissionAsked[];
   agentDefaults: AgentSettings;
   reviewerDefaults: AgentSettings;
+  accounts: Account[];
+  accountRoles: AccountRoles;
   error: string | null;
   clearError: () => void;
 }
@@ -27,6 +36,8 @@ export function useTasks(): TasksState {
   const [permissions, setPermissions] = useState<PermissionAsked[]>([]);
   const [agentDefaults, setAgentDefaults] = useState<AgentSettings>({});
   const [reviewerDefaults, setReviewerDefaults] = useState<AgentSettings>({});
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [accountRoles, setAccountRoles] = useState<AccountRoles>({});
   const [error, setError] = useState<string | null>(null);
 
   useEffect(
@@ -47,6 +58,10 @@ export function useTasks(): TasksState {
           case 'permissionResolved':
             setPermissions((list) => list.filter((p) => p.requestId !== msg.requestId));
             break;
+          case 'accountsLoaded':
+            setAccounts(msg.accounts);
+            setAccountRoles(msg.roles);
+            break;
           case 'agentDefaultsLoaded':
             setAgentDefaults(msg.defaults);
             setReviewerDefaults(msg.reviewer ?? {});
@@ -65,6 +80,8 @@ export function useTasks(): TasksState {
     permissions,
     agentDefaults,
     reviewerDefaults,
+    accounts,
+    accountRoles,
     error,
     clearError: () => setError(null),
   };

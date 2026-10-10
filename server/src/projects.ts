@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import type { AgentSettings, Project, ProjectRepo } from '../../core/src/messages.js';
+import type { AccountRoles, AgentSettings, Project, ProjectRepo } from '../../core/src/messages.js';
 import { SERVER_JSON_DIR } from './constants.js';
 
 /** Project Room storage: ~/.pixel-agents/projects/<id>/{project.json,docs/,memory/}. */
@@ -115,6 +115,7 @@ export function saveProject(input: Project): Project {
     repos,
     agent: cleanAgentSettings(input.agent),
     maxReviewRounds: cleanReviewRounds(input.maxReviewRounds),
+    accountRoles: cleanAccountRoles(input.accountRoles),
   };
   writeJson(path.join(dir, 'project.json'), project);
   return { ...project, dir };
@@ -173,6 +174,16 @@ export function saveAgentDefaults(
   fs.mkdirSync(path.dirname(defaultsFile()), { recursive: true });
   writeJson(defaultsFile(), { ...defaults, reviewer });
   return { defaults, reviewer };
+}
+
+/** Per-project account picks: only string ids are kept (an unknown id simply falls back at use). */
+function cleanAccountRoles(value: AccountRoles | undefined): AccountRoles | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const out: AccountRoles = {};
+  for (const role of ['dev', 'qa', 'router'] as const) {
+    if (typeof value[role] === 'string' && value[role]) out[role] = value[role];
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 /** Review rounds a project allows per task: a whole number 0–10 (0 turns QA off), else undefined (default). */

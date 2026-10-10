@@ -67,3 +67,15 @@ test('resume command: the task folder plus its session, safely quoted; none once
     'read-only: your own repo stays',
   );
 });
+
+test('resume command on an account reads its credential from the stored file, never inline', async () => {
+  const { resumeCommand } = await import('../src/taskStatus.js');
+  const t = task({ sessionId: 's1', worktree: '/wt/x', accountId: 'acc-1' });
+  const cmd = resumeCommand(t, { id: 'acc-1', name: 'QA', kind: 'apiKey', masked: 'sk-ant-api…' });
+  assert.equal(
+    cmd,
+    'cd "/wt/x" && ANTHROPIC_API_KEY="$(cat ~/.pixel-agents/accounts/acc-1.secret)" claude --resume s1',
+  );
+  const sub = resumeCommand(t, { id: 'acc-1', name: 'Dev', kind: 'subscription', masked: '' });
+  assert.ok(sub?.includes('CLAUDE_CODE_OAUTH_TOKEN="$(cat '));
+});

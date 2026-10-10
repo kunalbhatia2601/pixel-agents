@@ -16,7 +16,11 @@ export function parseRouterAnswer(text: string): boolean {
   return !/^\s*false\b/i.test(text);
 }
 
-export async function needsBranch(title: string, prompt: string): Promise<boolean> {
+export async function needsBranch(
+  title: string,
+  prompt: string,
+  env?: Record<string, string | undefined>,
+): Promise<boolean> {
   try {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     let answer = '';
@@ -30,6 +34,7 @@ export async function needsBranch(title: string, prompt: string): Promise<boolea
         settingSources: [],
         // No transcript: the office would otherwise adopt the router as an agent.
         persistSession: false,
+        env,
       },
     })) {
       if (message.type === 'result' && message.subtype === 'success') answer = message.result;
@@ -39,5 +44,35 @@ export async function needsBranch(title: string, prompt: string): Promise<boolea
     // A failed router must not strand the task; a branch is the safe default.
     console.warn('[Pixel Agents] Task router failed, cutting a branch:', err);
     return true;
+  }
+}
+
+/** One tiny call on an account: "ok", or why it failed (bad token, no credit, rate limited…). */
+export async function pingAccount(
+  env: Record<string, string | undefined>,
+): Promise<{ ok: boolean; message?: string }> {
+  try {
+    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+    for await (const message of query({
+      prompt: 'Reply with the single word OK.',
+      options: {
+        model: ROUTER_MODEL,
+        tools: [],
+        maxTurns: 1,
+        settingSources: [],
+        persistSession: false,
+        env,
+      },
+    })) {
+      if (message.type !== 'result') continue;
+      if (message.subtype === 'success' && !message.is_error) return { ok: true };
+      return {
+        ok: false,
+        message: message.subtype === 'success' ? message.result.slice(0, 300) : message.subtype,
+      };
+    }
+    return { ok: false, message: 'No answer' };
+  } catch (err) {
+    return { ok: false, message: (err instanceof Error ? err.message : String(err)).slice(0, 300) };
   }
 }

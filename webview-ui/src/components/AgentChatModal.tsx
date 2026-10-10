@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import type {
+  Account,
   ChatEntry,
   PermissionAsked,
   PermissionMode,
@@ -42,6 +43,8 @@ interface AgentChatModalProps {
   requests: PermissionAsked[];
   /** All tasks; the one this agent ran supplies authoritative usage and the changed files. */
   tasks: Task[];
+  /** For the account a task runs on (its name, and its credential in the terminal command). */
+  accounts: Account[];
 }
 
 function Entry({ entry }: { entry: ChatEntry }) {
@@ -93,6 +96,7 @@ export function AgentChatModal({
   onClose,
   requests,
   tasks,
+  accounts,
 }: AgentChatModalProps) {
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [controllable, setControllable] = useState(false);
@@ -106,6 +110,7 @@ export function AgentChatModal({
   const [taskId, setTaskId] = useState<string | undefined>(target?.taskId);
   const [transcriptUsage, setTranscriptUsage] = useState<UsageTotals | undefined>();
   const task = taskId ? tasks.find((t) => t.id === taskId) : undefined;
+  const account = accounts.find((a) => a.id === task?.accountId);
   const [draft, setDraft] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
@@ -216,7 +221,7 @@ export function AgentChatModal({
               ) : (
                 <>
                   Branch <span className="font-mono">{task.branch}</span> — messages continue this
-                  branch.
+                  branch.{account && ` Runs on the "${account.name}" account.`}
                 </>
               )}
             </span>
@@ -224,9 +229,9 @@ export function AgentChatModal({
           {task?.stage && (
             <span className={`text-sm ${STAGE_CLASS[task.stage]}`}>{stageLabel(task)}</span>
           )}
-          {task && !isReviewer && resumeCommand(task) && (
+          {task && !isReviewer && resumeCommand(task, account) && (
             <div className="flex flex-col gap-1">
-              <CopyField label="Open in terminal" value={resumeCommand(task)!} />
+              <CopyField label="Open in terminal" value={resumeCommand(task, account)!} />
               {task.sessionOpen && (
                 <span className="text-xs text-warning">
                   The office still has this session open: press End session in the task list first

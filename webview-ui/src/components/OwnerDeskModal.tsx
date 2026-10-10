@@ -1,4 +1,4 @@
-import type { Project, Task } from '../../../core/src/messages.js';
+import type { Account, Project, Task } from '../../../core/src/messages.js';
 import { onDesk, resumeCommand, STAGE_CLASS, stageLabel, taskUsage } from '../taskStatus.js';
 import { transport } from '../transport/index.js';
 import { ChatMarkdown } from './ChatMarkdown.js';
@@ -13,16 +13,19 @@ interface OwnerDeskModalProps {
   onClose: () => void;
   tasks: Task[];
   projects: Project[];
+  accounts: Account[];
   onOpenChat: (task: Task) => void;
 }
 
 function DeskCard({
   task,
   projectName,
+  account,
   onOpenChat,
 }: {
   task: Task;
   projectName: string;
+  account?: Account;
   onOpenChat: () => void;
 }) {
   const done = () => {
@@ -40,7 +43,10 @@ function DeskCard({
       <div className="flex items-start justify-between gap-6">
         <div className="flex flex-col gap-1 min-w-0">
           <span className="text-xl">{task.title}</span>
-          <span className="text-sm text-text-muted">{projectName}</span>
+          <span className="text-sm text-text-muted">
+            {projectName}
+            {account && ` · runs on "${account.name}"`}
+          </span>
         </div>
         {task.stage && (
           <span className={`shrink-0 ${STAGE_CLASS[task.stage]}`}>{stageLabel(task)}</span>
@@ -71,9 +77,9 @@ function DeskCard({
         {!task.handoff?.length && (
           <span className="text-sm text-text-muted">Collecting the branch details…</span>
         )}
-        {resumeCommand(task) && (
+        {resumeCommand(task, account) && (
           <div className="flex flex-col gap-1">
-            <CopyField label="Open in terminal" value={resumeCommand(task)!} />
+            <CopyField label="Open in terminal" value={resumeCommand(task, account)!} />
             {task.sessionOpen && (
               <span className="text-xs text-warning">
                 The office still has this session open: press End session in the task list first (or
@@ -121,6 +127,7 @@ export function OwnerDeskModal({
   onClose,
   tasks,
   projects,
+  accounts,
   onOpenChat,
 }: OwnerDeskModalProps) {
   const desk = tasks.filter(onDesk);
@@ -139,6 +146,7 @@ export function OwnerDeskModal({
               key={t.id}
               task={t}
               projectName={projectName(t.projectId)}
+              account={accounts.find((a) => a.id === t.accountId)}
               onOpenChat={() => onOpenChat(t)}
             />
           ))

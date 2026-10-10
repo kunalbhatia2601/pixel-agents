@@ -47,7 +47,8 @@ export type ServerMessage =
   | AgentDefaultsLoaded
   | AgentChat
   | FolderPicked
-  | BranchesListed;
+  | BranchesListed
+  | AccountsLoaded;
 
 export type ClientMessage =
   | WebviewReady
@@ -85,7 +86,11 @@ export type ClientMessage =
   | PickFolder
   | ListBranches
   | SetAgentMode
-  | CompleteTask;
+  | CompleteTask
+  | SaveAccount
+  | DeleteAccount
+  | TestAccount
+  | SetAccountRoles;
 
 export interface ProviderCapabilities {
   type: 'providerCapabilities';
@@ -349,6 +354,7 @@ export interface Project {
   repos: ProjectRepo[];
   dir?: string;
   maxReviewRounds?: number;
+  accountRoles?: AccountRoles;
   agent?: AgentSettings;
 }
 
@@ -358,6 +364,12 @@ export interface ProjectRepo {
   defaultBranch: string;
   setupCommand?: string;
   testCommand?: string;
+}
+
+export interface AccountRoles {
+  dev?: string;
+  qa?: string;
+  router?: string;
 }
 
 export interface AgentSettings {
@@ -401,6 +413,8 @@ export interface Task {
   sessionId?: string;
   parentTaskId?: string;
   readOnly?: boolean;
+  accountId?: string;
+  reviewAccountId?: string;
   baseCommits?: Record<string, string>;
   usage?: UsageTotals;
   changes?: CodeChanges;
@@ -547,6 +561,28 @@ export interface RepoBranches {
   repo: string;
   branches: string[];
   fetchError?: string;
+}
+
+export interface AccountsLoaded {
+  type: 'accountsLoaded';
+  accounts: Account[];
+  roles: AccountRoles;
+}
+
+export interface Account {
+  id: string;
+  name: string;
+  kind: AccountKind;
+  masked: string;
+  lastTest?: AccountTest;
+}
+
+export type AccountKind = 'subscription' | 'apiKey';
+
+export interface AccountTest {
+  ok: boolean;
+  at: number;
+  message?: string;
 }
 
 export interface WebviewReady {
@@ -754,4 +790,27 @@ export interface SetAgentMode {
 export interface CompleteTask {
   type: 'completeTask';
   taskId: string;
+}
+
+export interface SaveAccount {
+  type: 'saveAccount';
+  id: string;
+  name: string;
+  kind: AccountKind;
+  secret?: string;
+}
+
+export interface DeleteAccount {
+  type: 'deleteAccount';
+  id: string;
+}
+
+export interface TestAccount {
+  type: 'testAccount';
+  id: string;
+}
+
+export interface SetAccountRoles {
+  type: 'setAccountRoles';
+  roles: AccountRoles;
 }

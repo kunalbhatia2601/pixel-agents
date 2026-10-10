@@ -1,4 +1,4 @@
-import type { Task, TaskStage, UsageTotals } from '../../core/src/messages.js';
+import type { Account, Task, TaskStage, UsageTotals } from '../../core/src/messages.js';
 import { addUsageTotals } from './usageFormat.js';
 
 export const STATUS_CLASS: Record<Task['status'], string> = {
@@ -112,9 +112,13 @@ export function chatActivity(ctx: {
  * sessions per folder, so it must run from the task's folder: its worktree (or the owner's repo for a
  * read-only task). None once Done removed the worktree, or before a session exists.
  */
-export function resumeCommand(task: Task): string | undefined {
+export function resumeCommand(task: Task, account?: Account): string | undefined {
   if (!task.sessionId || !task.worktree) return undefined;
   if (task.stage === 'delivered' && !task.readOnly) return undefined;
   const dir = task.worktree.replace(/(["\\$`])/g, '\\$1');
-  return `cd "${dir}" && claude --resume ${task.sessionId}`;
+  // On an account: read its credential from the stored file (never spelled out in the command).
+  const credential = account
+    ? `${account.kind === 'subscription' ? 'CLAUDE_CODE_OAUTH_TOKEN' : 'ANTHROPIC_API_KEY'}="$(cat ~/.pixel-agents/accounts/${account.id}.secret)" `
+    : '';
+  return `cd "${dir}" && ${credential}claude --resume ${task.sessionId}`;
 }

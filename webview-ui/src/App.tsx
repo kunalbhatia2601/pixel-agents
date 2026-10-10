@@ -684,6 +684,7 @@ function App() {
         projects={taskState.projects}
         tasks={taskState.tasks}
         permissions={taskState.permissions}
+        accounts={taskState.accounts}
         onOpenChat={(task) => {
           setBoard(null);
           setChatTarget({ taskId: task.id });
@@ -702,6 +703,8 @@ function App() {
         projects={taskState.projects}
         agentDefaults={taskState.agentDefaults}
         reviewerDefaults={taskState.reviewerDefaults}
+        accounts={taskState.accounts}
+        accountRoles={taskState.accountRoles}
         tasks={taskState.tasks}
       />
 
@@ -725,6 +728,7 @@ function App() {
           chatTarget?.taskId ? p.taskId === chatTarget.taskId : p.agentId === chatTarget?.agentId,
         )}
         tasks={taskState.tasks}
+        accounts={taskState.accounts}
       />
 
       <OwnerDeskModal
@@ -732,6 +736,7 @@ function App() {
         onClose={() => setIsDeskOpen(false)}
         tasks={taskState.tasks}
         projects={taskState.projects}
+        accounts={taskState.accounts}
         onOpenChat={(task) => {
           setIsDeskOpen(false);
           setChatTarget({ taskId: task.id });

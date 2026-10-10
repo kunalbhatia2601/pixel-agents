@@ -1,9 +1,17 @@
 import { useState } from 'react';
 
-import type { AgentSettings, Project, ProjectRepo, Task } from '../../../core/src/messages.js';
+import type {
+  Account,
+  AccountRoles,
+  AgentSettings,
+  Project,
+  ProjectRepo,
+  Task,
+} from '../../../core/src/messages.js';
 import { NEW_PROJECT } from '../hooks/useTasks.js';
 import { transport } from '../transport/index.js';
 import { sumTasks } from '../usageFormat.js';
+import { AccountSelect, AccountsSection } from './AccountsSection.js';
 import { AgentSettingsFields } from './AgentSettingsFields.js';
 import { describeAgentSettings } from './describeAgentSettings.js';
 import { Button } from './ui/Button.js';
@@ -122,6 +130,8 @@ interface ProjectRoomModalProps {
   projects: Project[];
   agentDefaults: AgentSettings;
   reviewerDefaults: AgentSettings;
+  accounts: Account[];
+  accountRoles: AccountRoles;
   /** For per-project usage and code totals. */
   tasks: Task[];
   /** Open straight into this project's form (NEW_PROJECT for a new one); null shows the list. */
@@ -134,6 +144,8 @@ export function ProjectRoomModal({
   projects,
   agentDefaults,
   reviewerDefaults,
+  accounts,
+  accountRoles,
   tasks,
   initialEdit,
 }: ProjectRoomModalProps) {
@@ -208,6 +220,29 @@ export function ProjectRoomModal({
                 + Add repo
               </Button>
             </div>
+            {accounts.length > 0 && (
+              <div className="flex flex-col gap-2">
+                Claude accounts for this project (empty = the defaults)
+                <div className="grid grid-cols-2 gap-4">
+                  {(['dev', 'qa'] as const).map((role) => (
+                    <label key={role} className="flex flex-col gap-2 text-sm">
+                      {role === 'dev' ? 'Dev agents' : 'QA reviewers'}
+                      <AccountSelect
+                        accounts={accounts}
+                        value={editing.accountRoles?.[role]}
+                        onChange={(id) =>
+                          setEditing({
+                            ...editing,
+                            accountRoles: { ...editing.accountRoles, [role]: id },
+                          })
+                        }
+                        emptyLabel="Use the defaults"
+                      />
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
             <label className="flex flex-col gap-2">
               QA review rounds per task (0 = no QA review; empty = 3)
               <input
@@ -296,6 +331,7 @@ export function ProjectRoomModal({
                 </span>
               )}
             </div>
+            <AccountsSection accounts={accounts} roles={accountRoles} />
             {projects.length === 0 && (
               <p className="text-text-muted">No projects yet. Add one to start giving tasks.</p>
             )}

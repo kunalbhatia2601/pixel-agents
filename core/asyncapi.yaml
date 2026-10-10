@@ -128,6 +128,7 @@ components:
         - $ref: '#/components/schemas/AgentChat'
         - $ref: '#/components/schemas/FolderPicked'
         - $ref: '#/components/schemas/BranchesListed'
+        - $ref: '#/components/schemas/AccountsLoaded'
       discriminator: type
 
     ClientMessage:
@@ -168,6 +169,10 @@ components:
         - $ref: '#/components/schemas/ListBranches'
         - $ref: '#/components/schemas/SetAgentMode'
         - $ref: '#/components/schemas/CompleteTask'
+        - $ref: '#/components/schemas/SaveAccount'
+        - $ref: '#/components/schemas/DeleteAccount'
+        - $ref: '#/components/schemas/TestAccount'
+        - $ref: '#/components/schemas/SetAccountRoles'
       discriminator: type
 
     # ── Server message variants ────────────────────────────────────
@@ -1274,6 +1279,8 @@ components:
         maxReviewRounds:
           type: number
           description: Automatic QA rounds per task before escalating to the owner (default 3; 0 = no review).
+        accountRoles:
+          $ref: '#/components/schemas/AccountRoles'
         agent:
           $ref: '#/components/schemas/AgentSettings'
 
@@ -1394,6 +1401,116 @@ components:
           description: The chat is the task's QA reviewer, not its dev agent.
         usage:
           $ref: '#/components/schemas/UsageTotals'
+
+    Account:
+      description: A Claude account agents can run on. The secret never leaves the server; `masked` previews it.
+      type: object
+      additionalProperties: false
+      required: [id, name, kind, masked]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        kind:
+          $ref: '#/components/schemas/AccountKind'
+        masked:
+          type: string
+        lastTest:
+          $ref: '#/components/schemas/AccountTest'
+
+    AccountKind:
+      description: subscription = a long-lived token from `claude setup-token`; apiKey = an Anthropic Console API key.
+      type: string
+      enum: [subscription, apiKey]
+
+    AccountTest:
+      type: object
+      additionalProperties: false
+      required: [ok, at]
+      properties:
+        ok:
+          type: boolean
+        at:
+          type: number
+        message:
+          type: string
+
+    AccountRoles:
+      description: Which account each role runs on (account id); absent = the owner's own Claude Code login.
+      type: object
+      additionalProperties: false
+      properties:
+        dev:
+          type: string
+        qa:
+          type: string
+        router:
+          type: string
+
+    AccountsLoaded:
+      type: object
+      additionalProperties: false
+      required: [type, accounts, roles]
+      properties:
+        type:
+          const: accountsLoaded
+        accounts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Account'
+        roles:
+          $ref: '#/components/schemas/AccountRoles'
+
+    SaveAccount:
+      description: Create (empty id) or update an account. secret is required to create; omit it to keep the stored one. Privileged.
+      type: object
+      additionalProperties: false
+      required: [type, id, name, kind]
+      properties:
+        type:
+          const: saveAccount
+        id:
+          type: string
+        name:
+          type: string
+        kind:
+          $ref: '#/components/schemas/AccountKind'
+        secret:
+          type: string
+
+    DeleteAccount:
+      description: Delete an account and its stored secret; roles using it fall back to the owner's login. Privileged.
+      type: object
+      additionalProperties: false
+      required: [type, id]
+      properties:
+        type:
+          const: deleteAccount
+        id:
+          type: string
+
+    TestAccount:
+      description: Check an account with one tiny model call; the result comes back on the account. Privileged.
+      type: object
+      additionalProperties: false
+      required: [type, id]
+      properties:
+        type:
+          const: testAccount
+        id:
+          type: string
+
+    SetAccountRoles:
+      description: Assign accounts to roles (global defaults). Privileged.
+      type: object
+      additionalProperties: false
+      required: [type, roles]
+      properties:
+        type:
+          const: setAccountRoles
+        roles:
+          $ref: '#/components/schemas/AccountRoles'
 
     CompleteTask:
       description: The owner is done with a desk task. Ends its session and removes its worktrees; branches are kept. Privileged.
@@ -1777,6 +1894,12 @@ components:
         readOnly:
           type: boolean
           description: No branch was cut; the agent works read-only in the user's own checkout.
+        accountId:
+          type: string
+          description: The account the dev agent runs on (kept for resumes); absent = the owner's login.
+        reviewAccountId:
+          type: string
+          description: The account the latest QA review ran on.
         baseCommits:
           type: object
           description: Repo name -> commit the task's worktree started from; code changes are measured against it.
