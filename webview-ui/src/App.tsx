@@ -10,7 +10,6 @@ import { DebugView } from './components/DebugView.js';
 import { EditActionBar } from './components/EditActionBar.js';
 import { ErrorToast } from './components/ErrorToast.js';
 import { IntroBubble } from './components/IntroBubble.js';
-import { MigrationNotice } from './components/MigrationNotice.js';
 import { OwnerDeskModal } from './components/OwnerDeskModal.js';
 import { ProjectRoomModal } from './components/ProjectRoomModal.js';
 import { SettingsModal } from './components/SettingsModal.js';
@@ -19,12 +18,14 @@ import { Tooltip } from './components/Tooltip.js';
 import { Modal } from './components/ui/Modal.js';
 import { VersionIndicator } from './components/VersionIndicator.js';
 import { ZoomControls } from './components/ZoomControls.js';
+import { OWNER_VISIBLE_KEY } from './constants.js';
 import { useEditorActions } from './hooks/useEditorActions.js';
 import { useEditorKeyboard } from './hooks/useEditorKeyboard.js';
 import { useExtensionMessages } from './hooks/useExtensionMessages.js';
 import { useIntroTour } from './hooks/useIntroTour.js';
 import { NEW_PROJECT, useTasks } from './hooks/useTasks.js';
 import { OfficeCanvas } from './office/components/OfficeCanvas.js';
+import { OwnerTag } from './office/components/OwnerTag.js';
 import { ProjectShelves } from './office/components/ProjectShelves.js';
 import { RoomPile } from './office/components/RoomPile.js';
 import { TaskRoomBoards } from './office/components/TaskRoomBoards.js';
@@ -85,6 +86,26 @@ function App() {
   const isProjectsOpen = projectsView !== null;
   const [chatTarget, setChatTarget] = useState<ChatTarget | null>(null);
   const [isDeskOpen, setIsDeskOpen] = useState(false);
+  // "You": the owner's own character. Shown by default; the choice is remembered in this browser.
+  const [ownerVisible, setOwnerVisible] = useState(() => {
+    try {
+      return localStorage.getItem(OWNER_VISIBLE_KEY) !== 'false';
+    } catch {
+      return true;
+    }
+  });
+  const [ownerManual, setOwnerManual] = useState(false);
+  useEffect(() => {
+    const os = getOfficeState();
+    if (ownerVisible) os.showOwner();
+    else os.hideOwner();
+    try {
+      localStorage.setItem(OWNER_VISIBLE_KEY, String(ownerVisible));
+    } catch {
+      /* storage blocked: the choice just isn't remembered */
+    }
+  }, [ownerVisible]);
+
   const chatTask = chatTarget?.taskId
     ? taskState.tasks.find((t) => t.id === chatTarget.taskId)
     : undefined;
@@ -102,7 +123,6 @@ function App() {
     subagentTools,
     subagentCharacters,
     layoutReady,
-    layoutWasReset,
     loadedAssets,
     workspaceFolders,
     agentFolderNames,
@@ -127,12 +147,39 @@ function App() {
   } = useExtensionMessages(getOfficeState, editor.setLastSavedLayout, isEditDirty);
 
   // Show migration notice once layout reset is detected
-  const [migrationNoticeDismissed, setMigrationNoticeDismissed] = useState(false);
-  const showMigrationNotice = layoutWasReset && !migrationNoticeDismissed;
 
   const [isChangelogOpen, setIsChangelogOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isHooksInfoOpen, setIsHooksInfoOpen] = useState(false);
+
+  // Arrow keys / WASD walk "You" — never while typing, editing the layout, or with a window open.
+  const anyWindowOpen =
+    isSettingsOpen || isTasksOpen || isProjectsOpen || chatTarget !== null || isDeskOpen;
+  useEffect(() => {
+    if (!ownerVisible || editor.isEditMode || anyWindowOpen) return;
+    const steps: Record<string, [number, number]> = {
+      ArrowUp: [0, -1],
+      ArrowDown: [0, 1],
+      ArrowLeft: [-1, 0],
+      ArrowRight: [1, 0],
+      w: [0, -1],
+      s: [0, 1],
+      a: [-1, 0],
+      d: [1, 0],
+    };
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('input, textarea, select, [contenteditable="true"]')) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const step = steps[e.key] ?? steps[e.key.toLowerCase()];
+      if (!step) return;
+      e.preventDefault();
+      getOfficeState().moveOwner(step[0], step[1]);
+      setOwnerManual(true);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [ownerVisible, editor.isEditMode, anyWindowOpen]);
   const [hooksTooltipDismissed, setHooksTooltipDismissed] = useState(false);
   const [isDebugMode, setIsDebugMode] = useState(false);
   const [alwaysShowOverlay, setAlwaysShowOverlay] = useState(false);
@@ -506,10 +553,20 @@ function App() {
               zoom={editor.zoom}
               panRef={editor.panRef}
               area="Owner"
+              onFurniture="COFFEE_TABLE"
               items={taskState.tasks.filter(onDesk)}
               label={`${taskState.tasks.filter(onDesk).length} for you`}
               heading="On your desk"
               onOpen={() => setIsDeskOpen(true)}
+            />
+          )}
+
+          {isBrowserRuntime && (
+            <OwnerTag
+              officeState={officeState}
+              containerRef={containerRef}
+              zoom={editor.zoom}
+              panRef={editor.panRef}
             />
           )}
 
@@ -608,6 +665,16 @@ function App() {
         onToggleSettings={() => setIsSettingsOpen((v) => !v)}
         workspaceFolders={workspaceFolders}
         onOpenTasks={() => openBoard({ tab: 'live', form: {} })}
+        ownerVisible={ownerVisible}
+        ownerManual={ownerManual}
+        onToggleOwner={() => {
+          setOwnerManual(false);
+          setOwnerVisible((v) => !v);
+        }}
+        onRoamOwner={() => {
+          getOfficeState().roamOwner();
+          setOwnerManual(false);
+        }}
       />
 
       <TasksModal
@@ -728,10 +795,6 @@ function App() {
         onImportLayout={handleImportLayout}
       />
 
-      {showMigrationNotice && (
-        <MigrationNotice onDismiss={() => setMigrationNoticeDismissed(true)} />
-      )}
-
       {intro && (
         <IntroBubble
           officeState={officeState}
@@ -752,7 +815,6 @@ function App() {
             isDeskOpen ||
             isChangelogOpen ||
             isHooksInfoOpen ||
-            showMigrationNotice ||
             editor.isEditMode
           }
         />

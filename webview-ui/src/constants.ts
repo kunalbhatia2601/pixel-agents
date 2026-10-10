@@ -372,3 +372,15 @@ export const WORKING_WORDS = [
 // ── Owner desk ──────────────────────────────────────────────────
 /** How long a copy button shows "Copied ✓". */
 export const COPIED_FEEDBACK_MS = 1500;
+
+// ── Closed rooms and the owner's character ──────────────────────
+/** Rooms nobody walks into: their tiles are blocked for every character and pet. */
+export const CLOSED_AREAS = ['Live Tasks', 'All Tasks'];
+/** The owner's own room, where "You" roams and handed-over work lands. */
+export const OWNER_AREA = 'Owner';
+/** Id of the owner's character: outside every agent id range. */
+export const OWNER_ID = -2_000_000_000;
+/** Which of the 6 character sprites is "You". */
+export const OWNER_PALETTE = 5;
+/** Browser-only preference: is "You" shown in the office. */
+export const OWNER_VISIBLE_KEY = 'pixel-agents.ownerVisible';

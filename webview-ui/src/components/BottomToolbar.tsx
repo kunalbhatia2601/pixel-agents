@@ -14,6 +14,11 @@ interface BottomToolbarProps {
   onToggleSettings: () => void;
   workspaceFolders: WorkspaceFolder[];
   onOpenTasks: () => void;
+  /** The owner's own character ("You"). */
+  ownerVisible: boolean;
+  ownerManual: boolean;
+  onToggleOwner: () => void;
+  onRoamOwner: () => void;
 }
 
 export function BottomToolbar({
@@ -24,6 +29,10 @@ export function BottomToolbar({
   onToggleSettings,
   workspaceFolders,
   onOpenTasks,
+  ownerVisible,
+  ownerManual,
+  onToggleOwner,
+  onRoamOwner,
 }: BottomToolbarProps) {
   const [isFolderPickerOpen, setIsFolderPickerOpen] = useState(false);
   const [isBypassMenuOpen, setIsBypassMenuOpen] = useState(false);
@@ -90,6 +99,24 @@ export function BottomToolbar({
       {isBrowserRuntime && (
         <Button variant="accent" onClick={onOpenTasks}>
           + Task
+        </Button>
+      )}
+      {isBrowserRuntime && (
+        <Button
+          variant={ownerVisible ? 'active' : 'default'}
+          onClick={onToggleOwner}
+          title={
+            ownerVisible
+              ? 'Hide your character. While shown: arrow keys / WASD walk it'
+              : 'Show your character in the Owner room'
+          }
+        >
+          You
+        </Button>
+      )}
+      {isBrowserRuntime && ownerVisible && ownerManual && (
+        <Button onClick={onRoamOwner} title="Let your character wander the Owner room again">
+          Roam
         </Button>
       )}
       {!isBrowserRuntime && (

@@ -76,7 +76,6 @@ interface ExtensionMessageState {
   subagentTools: Record<number, Record<string, ToolActivity[]>>;
   subagentCharacters: SubagentCharacter[];
   layoutReady: boolean;
-  layoutWasReset: boolean;
   loadedAssets?: { catalog: FurnitureAsset[]; sprites: Record<string, string[][]> };
   workspaceFolders: WorkspaceFolder[];
   /** Distinct folderNames seen across agents this session — source for the Areas folder dropdown. */
@@ -130,7 +129,6 @@ export function useExtensionMessages(
   >({});
   const [subagentCharacters, setSubagentCharacters] = useState<SubagentCharacter[]>([]);
   const [layoutReady, setLayoutReady] = useState(false);
-  const [layoutWasReset, setLayoutWasReset] = useState(false);
   const [loadedAssets, setLoadedAssets] = useState<
     { catalog: FurnitureAsset[]; sprites: Record<string, string[][]> } | undefined
   >();
@@ -238,9 +236,6 @@ export function useExtensionMessages(
         pendingAgents = [];
         layoutReadyRef.current = true;
         setLayoutReady(true);
-        if (msg.wasReset) {
-          setLayoutWasReset(true);
-        }
         if (os.characters.size > 0) {
           saveAgentSeats(os);
         }
@@ -766,7 +761,6 @@ export function useExtensionMessages(
     subagentTools,
     subagentCharacters,
     layoutReady,
-    layoutWasReset,
     loadedAssets,
     workspaceFolders,
     agentFolderNames,

@@ -14,7 +14,8 @@ vi.mock('os', async () => {
 const { deleteProject, getProject, listProjectFiles, listProjects, saveProject } =
   await import('../src/projects.js');
 
-describe('projects', () => {
+// Real git per test: slow when the whole suite runs in parallel.
+describe('projects', { timeout: 30_000 }, () => {
   let repo: string;
 
   beforeEach(() => {

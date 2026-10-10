@@ -5,6 +5,7 @@ import {
   CHARACTER_HIT_HALF_WIDTH,
   CHARACTER_HIT_HEIGHT,
   CHARACTER_SITTING_OFFSET_PX,
+  CLOSED_AREAS,
   DISMISS_BUBBLE_FAST_FADE_SEC,
   FURNITURE_ANIM_INTERVAL_SEC,
   GREETER_ID,
@@ -13,6 +14,9 @@ import {
   INACTIVE_SEAT_TIMER_MIN_SEC,
   INACTIVE_SEAT_TIMER_RANGE_SEC,
   MAX_PET_ID_LENGTH,
+  OWNER_AREA,
+  OWNER_ID,
+  OWNER_PALETTE,
   PET_HIT_HALF_WIDTH,
   PET_HIT_HEIGHT,
   RESERVED_AREAS,
@@ -94,6 +98,12 @@ export class OfficeState {
    * others.
    */
   greeter: Character | null = null;
+  /** The owner's own character ("You"): not an agent, never seated, roams the Owner room. */
+  owner: Character | null = null;
+  /** True once the owner steered "You" by hand: it stays put instead of wandering. */
+  ownerManual = false;
+  /** "You" should be in the office: re-placed in the Owner room whenever the layout changes. */
+  private ownerWanted = false;
 
   /** World-space point the camera drifts to while the greeter is up
    *  (the bubble overlay recomputes it every frame: the combined center of the
@@ -113,6 +123,7 @@ export class OfficeState {
     this.seats = layoutToSeats(this.layout.furniture);
     this.blockedTiles = getBlockedTiles(this.layout.furniture);
     this.furniture = layoutToFurnitureInstances(this.layout.furniture);
+    this.blockClosedAreas();
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles);
     // Pets are built last because they need walkableTiles populated for spawn.
     this.rebuildPetsFromLayout(this.layout);
@@ -126,7 +137,13 @@ export class OfficeState {
     this.seats = layoutToSeats(layout.furniture);
     this.blockedTiles = getBlockedTiles(layout.furniture);
     this.rebuildFurnitureInstances();
+    this.blockClosedAreas();
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles);
+    // A new layout (the saved one arriving, or an edit) may move the Owner room: place "You" afresh.
+    if (this.ownerWanted) {
+      this.owner = null;
+      this.showOwner();
+    }
 
     // Shift character positions when grid expands left/up
     if (shift && (shift.col !== 0 || shift.row !== 0)) {
@@ -503,6 +520,79 @@ export class OfficeState {
    *  a wall, or VOID (seat tiles are in blockedTiles, so closestFreeWalkableTile
    *  covers every one of those). Idempotent; a remount mid-despawn (StrictMode)
    *  revives it. */
+  /** Every tile of a closed room is blocked, so nothing spawns, wanders or paths into it. */
+  private blockClosedAreas(): void {
+    const { areaTiles, cols } = this.layout;
+    if (!areaTiles) return;
+    const closed = new Set(CLOSED_AREAS);
+    areaTiles.forEach((label, i) => {
+      if (label && closed.has(label)) this.blockedTiles.add(`${i % cols},${Math.floor(i / cols)}`);
+    });
+  }
+
+  /** Walkable tiles inside the Owner room: where "You" wanders when left alone. */
+  private ownerRoomTiles(): Array<{ col: number; row: number }> {
+    const { areaTiles, cols } = this.layout;
+    if (!areaTiles) return this.walkableTiles;
+    const inRoom = this.walkableTiles.filter((t) => areaTiles[t.row * cols + t.col] === OWNER_AREA);
+    return inRoom.length ? inRoom : this.walkableTiles;
+  }
+
+  /** Puts "You" in the office, somewhere in the Owner room. Idempotent. */
+  showOwner(): void {
+    this.ownerWanted = true;
+    if (this.owner) {
+      if (this.owner.matrixEffect === 'despawn') startMatrixEffect(this.owner, 'spawn');
+      return;
+    }
+    const tiles = this.ownerRoomTiles();
+    if (!tiles.length) return;
+    const spawn = tiles[Math.floor(Math.random() * tiles.length)];
+    const ch = createCharacter(OWNER_ID, OWNER_PALETTE, null, null, 0);
+    ch.state = CharacterState.IDLE;
+    ch.isActive = false;
+    ch.dir = Direction.DOWN;
+    ch.x = spawn.col * TILE_SIZE + TILE_SIZE / 2;
+    ch.y = spawn.row * TILE_SIZE + TILE_SIZE / 2;
+    ch.tileCol = spawn.col;
+    ch.tileRow = spawn.row;
+    startMatrixEffect(ch, 'spawn');
+    this.owner = ch;
+    this.ownerManual = false;
+  }
+
+  hideOwner(): void {
+    this.ownerWanted = false;
+    if (this.owner && this.owner.matrixEffect !== 'despawn')
+      startMatrixEffect(this.owner, 'despawn');
+  }
+
+  /** One step of "You" by keyboard. Ignored mid-step, into walls/furniture, or into closed rooms. */
+  moveOwner(dCol: number, dRow: number): void {
+    const ch = this.owner;
+    if (!ch || ch.matrixEffect || ch.path.length > 0) return;
+    this.ownerManual = true;
+    const col = ch.tileCol + dCol;
+    const row = ch.tileRow + dRow;
+    ch.dir =
+      dCol > 0
+        ? Direction.RIGHT
+        : dCol < 0
+          ? Direction.LEFT
+          : dRow < 0
+            ? Direction.UP
+            : Direction.DOWN;
+    if (!isWalkable(col, row, this.tileMap, this.blockedTiles)) return;
+    ch.path = [{ col, row }];
+    ch.moveProgress = 0;
+    ch.state = CharacterState.WALK;
+  }
+
+  /** Lets "You" wander the Owner room again (it walks back there on its own). */
+  roamOwner(): void {
+    this.ownerManual = false;
+  }
+
   spawnGreeter(): void {
     this.greeterCameraCancelled = false;
     if (this.greeter) {
@@ -1148,6 +1238,22 @@ export class OfficeState {
       this.greeter = null;
     }
 
+    if (this.owner) {
+      const effect = advanceMatrixEffect(this.owner, dt);
+      if (effect === 'despawned') this.owner = null;
+      else if (effect === 'none') {
+        // Steered by hand: no wandering. Otherwise it picks spots in the Owner room, like an idle agent.
+        updateCharacter(
+          this.owner,
+          dt,
+          this.ownerManual ? [] : this.ownerRoomTiles(),
+          new Map(),
+          this.tileMap,
+          this.blockedTiles,
+        );
+      }
+    }
+
     const toDelete: number[] = [];
     for (const ch of this.characters.values()) {
       if (ch.dormant) continue; // hidden until its agent does something again
@@ -1228,6 +1334,7 @@ export class OfficeState {
   getCharacters(): Character[] {
     const chars = Array.from(this.characters.values()).filter((ch) => !ch.dormant);
     if (this.greeter) chars.push(this.greeter);
+    if (this.owner) chars.push(this.owner);
     return chars;
   }
 

@@ -21,7 +21,8 @@ interface DeskInternals {
   buildHandoff(task: Task, project: Project): Promise<void>;
 }
 
-describe("the owner's desk", () => {
+// Real git (init, worktree add/remove) is slow when the whole suite runs in parallel.
+describe("the owner's desk", { timeout: 30_000 }, () => {
   let repo: string;
   const git = (...args: string[]) =>
     execFileSync('git', ['-C', repo, ...args], { encoding: 'utf-8' }).trim();
@@ -55,7 +56,7 @@ describe("the owner's desk", () => {
       }).id,
     )!;
     const task = runner.start(project.id, 'Fix it', 'do it');
-    await desk.prepareWorktree(task, project, {});
+    await desk.prepareWorktree(task, project, { api: 'main' }); // explicit base: no network fetch
     execFileSync('git', [
       '-C',
       task.worktree!,

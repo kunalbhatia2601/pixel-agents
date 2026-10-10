@@ -31,7 +31,8 @@ function makeRunner() {
   return { runner, execute, review };
 }
 
-describe('TaskRunner scheduler', () => {
+// Real git per test: slow when the whole suite runs in parallel.
+describe('TaskRunner scheduler', { timeout: 30_000 }, () => {
   let projectId: string;
 
   beforeEach(() => {

@@ -64,6 +64,22 @@ interface LayoutLoadResult {
  * 2. Else if defaultLayout provided → write to file, return it
  * 3. Else → return null
  */
+/**
+ * Copies the saved layout aside before a bundled update replaces it, so the owner's edits are never
+ * lost silently: ~/.pixel-agents/layout.backup-<timestamp>.json. Best effort — a failed copy is logged.
+ */
+function backupLayoutFile(): void {
+  const filePath = getLayoutFilePath();
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const backup = path.join(path.dirname(filePath), `layout.backup-${stamp}.json`);
+  try {
+    fs.copyFileSync(filePath, backup);
+    console.log(`[Pixel Agents] Previous layout saved to ${backup}`);
+  } catch (err) {
+    console.warn('[Pixel Agents] Could not back up the previous layout', err);
+  }
+}
+
 export function loadLayout(
   defaultLayout?: Record<string, unknown> | null,
 ): LayoutLoadResult | null {
@@ -75,6 +91,7 @@ export function loadLayout(
       console.log(
         `[Pixel Agents] Layout revision outdated (${fileRevision} < ${defaultRevision}), resetting to bundled default`,
       );
+      backupLayoutFile();
       writeLayoutToFile(defaultLayout!);
       return { layout: defaultLayout!, wasReset: true };
     }

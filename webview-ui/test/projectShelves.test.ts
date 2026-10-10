@@ -12,7 +12,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 test('the bundled store room has 12 shelves: 4 on the wall first, then the floor rows', () => {
   const layout = JSON.parse(
-    readFileSync(path.join(root, 'public/assets/default-layout-4.json'), 'utf8'),
+    readFileSync(path.join(root, 'public/assets/default-layout-5.json'), 'utf8'),
   ) as OfficeLayout;
   const shelves = projectShelves(layout);
   assert.equal(shelves.length, 12);
@@ -47,7 +47,7 @@ test('shelves outside the Project Directory area are ignored', () => {
 test('the bundled Tasks room has Live over All, left of the Dev Team and Project Directory', async () => {
   const { areaBounds } = await import('../src/office/layout/projectShelves.js');
   const layout = JSON.parse(
-    readFileSync(path.join(root, 'public/assets/default-layout-4.json'), 'utf8'),
+    readFileSync(path.join(root, 'public/assets/default-layout-5.json'), 'utf8'),
   ) as OfficeLayout;
   const live = areaBounds(layout, 'Live Tasks');
   const all = areaBounds(layout, 'All Tasks');

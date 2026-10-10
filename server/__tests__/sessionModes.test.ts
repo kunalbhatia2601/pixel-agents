@@ -38,7 +38,8 @@ function liveSession(internals: Internals, taskId: string): FakeSession {
   return session;
 }
 
-describe('idle sessions and permission modes', () => {
+// Real git per test: slow when the whole suite runs in parallel.
+describe('idle sessions and permission modes', { timeout: 30_000 }, () => {
   let projectId: string;
 
   beforeEach(() => {
