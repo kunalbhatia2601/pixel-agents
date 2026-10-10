@@ -384,3 +384,9 @@ export const OWNER_ID = -2_000_000_000;
 export const OWNER_PALETTE = 5;
 /** Browser-only preference: is "You" shown in the office. */
 export const OWNER_VISIBLE_KEY = 'pixel-agents.ownerVisible';
+
+// ── Paging ──────────────────────────────────────────────────────
+/** Tasks per page on the Task Board. */
+export const TASK_BOARD_PAGE_SIZE = 20;
+/** Tasks per page on the Tasks room's wall boards (they are small). */
+export const ROOM_BOARD_PAGE_SIZE = 12;

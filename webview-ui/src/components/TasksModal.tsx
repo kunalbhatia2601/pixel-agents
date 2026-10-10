@@ -1,6 +1,8 @@
 import { useState } from 'react';
 
 import type { PermissionAsked, Project, Task } from '../../../core/src/messages.js';
+import { TASK_BOARD_PAGE_SIZE } from '../constants.js';
+import { usePaging } from '../hooks/usePaging.js';
 import {
   isLiveTask,
   STAGE_CLASS,
@@ -12,6 +14,7 @@ import {
 import { transport } from '../transport/index.js';
 import { describeAgentSettings } from './describeAgentSettings.js';
 import { NewTaskForm } from './NewTaskForm.js';
+import { Pager } from './Pager.js';
 import { Button } from './ui/Button.js';
 import { Modal } from './ui/Modal.js';
 import { UsageSummary } from './UsageSummary.js';
@@ -116,6 +119,7 @@ export function TasksModal({
   const [tab, setTab] = useState<TaskBoardTab>(view?.tab ?? 'live');
   const [form, setForm] = useState<TaskBoardView['form'] | null>(view?.form ?? null);
   const shown = tab === 'live' ? tasks.filter(isLiveTask) : tasks;
+  const paging = usePaging(shown, TASK_BOARD_PAGE_SIZE);
   const projectName = (id: string) => projects.find((p) => p.id === id)?.name ?? 'Deleted project';
 
   return (
@@ -161,7 +165,10 @@ export function TasksModal({
               role="tab"
               aria-selected={tab === t}
               variant={tab === t ? 'active' : 'default'}
-              onClick={() => setTab(t)}
+              onClick={() => {
+                setTab(t);
+                paging.reset();
+              }}
             >
               {t === 'live' ? `Live (${tasks.filter(isLiveTask).length})` : `All (${tasks.length})`}
             </Button>
@@ -173,7 +180,7 @@ export function TasksModal({
             {tab === 'live' ? 'Nothing running or waiting right now.' : 'No tasks yet.'}
           </p>
         )}
-        {shown.map((t) => (
+        {paging.pageItems.map((t) => (
           <TaskRow
             key={t.id}
             task={t}
@@ -184,6 +191,7 @@ export function TasksModal({
             onBranch={() => setForm({ fromTask: t })}
           />
         ))}
+        <Pager page={paging.page} pages={paging.pages} onPrev={paging.prev} onNext={paging.next} />
       </div>
     </Modal>
   );
