@@ -21,6 +21,8 @@ export const STAGE_CLASS: Record<TaskStage, string> = {
   changes_requested: 'text-warning',
   approved: 'text-status-success',
   escalated: 'text-status-error',
+  ready: 'text-status-success',
+  delivered: 'text-text-muted',
 };
 
 /** Where the task is in the QA loop, e.g. "In review (round 2/3)". Empty before any review. */
@@ -38,6 +40,10 @@ export function stageLabel(task: Task): string {
       return 'Approved by QA — ready for you';
     case 'escalated':
       return 'Needs you';
+    case 'ready':
+      return 'Ready for you (no QA)';
+    case 'delivered':
+      return 'Done';
     default:
       return '';
   }
@@ -56,6 +62,11 @@ export function isLiveTask(task: Task): boolean {
     task.stage === 'reviewing' ||
     task.stage === 'changes_requested'
   );
+}
+
+/** Waiting on the owner's desk: approved by QA, escalated, or ready with QA off. */
+export function onDesk(task: Task): boolean {
+  return task.stage === 'approved' || task.stage === 'escalated' || task.stage === 'ready';
 }
 
 /** Dev + QA spend for a task. */

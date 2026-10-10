@@ -84,7 +84,8 @@ export type ClientMessage =
   | InterruptAgent
   | PickFolder
   | ListBranches
-  | SetAgentMode;
+  | SetAgentMode
+  | CompleteTask;
 
 export interface ProviderCapabilities {
   type: 'providerCapabilities';
@@ -390,6 +391,8 @@ export interface Task {
   agent?: AgentSettings;
   sessionOpen?: boolean;
   prompt?: string;
+  summary?: string;
+  handoff?: RepoHandoff[];
   stage?: TaskStage;
   maxReviewRounds?: number;
   reviews?: ReviewRecord[];
@@ -406,8 +409,26 @@ export interface Task {
 
 export type TaskStatus = 'queued' | 'preparing' | 'running' | 'done' | 'failed' | 'stopped';
 
+export interface RepoHandoff {
+  repo: string;
+  branch: string;
+  baseBranch: string;
+  repoUrl?: string;
+  branchUrl?: string;
+  createPrUrl?: string;
+  pushCommand: string;
+  worktree?: string;
+  commits?: number;
+}
+
 export type TaskStage =
-  'review_queued' | 'reviewing' | 'changes_requested' | 'approved' | 'escalated';
+  | 'review_queued'
+  | 'reviewing'
+  | 'changes_requested'
+  | 'approved'
+  | 'escalated'
+  | 'ready'
+  | 'delivered';
 
 export interface ReviewRecord {
   round: number;
@@ -728,4 +749,9 @@ export interface SetAgentMode {
   id?: number;
   taskId?: string;
   mode: PermissionMode;
+}
+
+export interface CompleteTask {
+  type: 'completeTask';
+  taskId: string;
 }

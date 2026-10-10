@@ -167,6 +167,7 @@ components:
         - $ref: '#/components/schemas/PickFolder'
         - $ref: '#/components/schemas/ListBranches'
         - $ref: '#/components/schemas/SetAgentMode'
+        - $ref: '#/components/schemas/CompleteTask'
       discriminator: type
 
     # ── Server message variants ────────────────────────────────────
@@ -1394,6 +1395,17 @@ components:
         usage:
           $ref: '#/components/schemas/UsageTotals'
 
+    CompleteTask:
+      description: The owner is done with a desk task. Ends its session and removes its worktrees; branches are kept. Privileged.
+      type: object
+      additionalProperties: false
+      required: [type, taskId]
+      properties:
+        type:
+          const: completeTask
+        taskId:
+          type: string
+
     SetAgentMode:
       description: Switch a task agent's permission mode, live if it is running. Privileged.
       type: object
@@ -1593,6 +1605,34 @@ components:
       type: string
       enum: [auto, branch, none]
 
+    RepoHandoff:
+      type: object
+      additionalProperties: false
+      required: [repo, branch, baseBranch, pushCommand]
+      properties:
+        repo:
+          type: string
+        branch:
+          type: string
+        baseBranch:
+          type: string
+          description: The branch the task started from (the PR target).
+        repoUrl:
+          type: string
+          description: Web page of the repo (credentials stripped); absent for unknown hosts.
+        branchUrl:
+          type: string
+        createPrUrl:
+          type: string
+          description: The host's own "new pull request" page, prefilled. Nothing is created automatically.
+        pushCommand:
+          type: string
+        worktree:
+          type: string
+        commits:
+          type: number
+          description: Commits on the branch since it started.
+
     TaskStatus:
       description: The dev agent's lifecycle. queued = waiting for one of the Dev Team's seats.
       type: string
@@ -1602,9 +1642,10 @@ components:
       description: >-
         Where the task is in the review loop (absent = no review yet). review_queued = on the QA pile,
         reviewing = a QA agent is on it, changes_requested = the dev is fixing review comments,
-        approved = ready for the owner, escalated = needs the owner (round limit, no progress, or review failure).
+        approved = ready for the owner, escalated = needs the owner (round limit, no progress, or review failure),
+        ready = committed work with QA turned off, delivered = the owner marked it done (off the desk, worktrees removed).
       type: string
-      enum: [review_queued, reviewing, changes_requested, approved, escalated]
+      enum: [review_queued, reviewing, changes_requested, approved, escalated, ready, delivered]
 
     ReviewSeverity:
       type: string
@@ -1703,6 +1744,14 @@ components:
         prompt:
           type: string
           description: The original instructions (the reviewer checks the work against them).
+        summary:
+          type: string
+          description: The dev agent's latest reply (its summary of the work).
+        handoff:
+          type: array
+          description: Per repo, everything the owner needs to take the branch from here (filled once it reaches the desk).
+          items:
+            $ref: '#/components/schemas/RepoHandoff'
         stage:
           $ref: '#/components/schemas/TaskStage'
         maxReviewRounds:

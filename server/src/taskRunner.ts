@@ -12,6 +12,7 @@ import type {
   Project,
   ProjectRepo,
   RepoBranches,
+  RepoHandoff,
   Task,
 } from '../../core/src/messages.js';
 import { normalizeProjectPath } from '../../core/src/normalizeProjectPath.js';
@@ -19,6 +20,7 @@ import type { AgentRuntime } from './agentRuntime.js';
 import type { AgentStateStore } from './agentStateStore.js';
 import { DEV_TEAM_AREA, ensureAreaMapping, QA_AREA } from './areaMappings.js';
 import { SERVER_JSON_DIR } from './constants.js';
+import { repoLinks } from './handoff.js';
 import {
   cleanAgentSettings,
   getAgentDefaults,
@@ -45,6 +47,11 @@ const tasksFile = () => path.join(root(), 'tasks.json');
 const worktreesRoot = () => path.join(root(), 'worktrees');
 const SETUP_TIMEOUT_MS = 10 * 60_000;
 const DETAIL_MAX_CHARS = 2000;
+
+/** Tasks waiting on the owner's desk. */
+export function onDesk(task: Task): boolean {
+  return task.stage === 'approved' || task.stage === 'escalated' || task.stage === 'ready';
+}
 
 /** The tool a Plan-mode agent calls to present its plan for approval. */
 const EXIT_PLAN_MODE = 'ExitPlanMode';
@@ -142,8 +149,8 @@ type StoredTask = Task & {
   pending?: PendingWork;
   /** Reviews since the owner last messaged the dev; capped by maxReviewRounds. */
   autoRounds?: number;
-  /** The dev's latest reply, given to the reviewer. */
-  lastSummary?: string;
+  /** Repo name → the branch each worktree started from (the PR target on the desk). */
+  baseRefs?: Record<string, string>;
   /** HEAD of each repo at the last review: no new commits means nothing to review. */
   reviewedHeads?: Record<string, string>;
   commitNudged?: boolean;
@@ -302,7 +309,19 @@ export class TaskRunner {
           ? this.refreshChanges(task, project)
           : undefined;
       }),
-    ).then(() => this.changed());
+    )
+      .then(() =>
+        // Desk tasks from before the desk existed get their links too.
+        Promise.all(
+          this.tasks
+            .filter((t) => onDesk(t) && !t.handoff)
+            .map((t) => {
+              const project = getProject(t.projectId);
+              return project ? this.buildHandoff(t, project) : undefined;
+            }),
+        ),
+      )
+      .then(() => this.changed());
   }
 
   list(): Task[] {
@@ -741,7 +760,7 @@ export class TaskRunner {
         await this.refreshChanges(task, project);
         if (message.subtype === 'success') {
           task.status = 'done';
-          (task as StoredTask).lastSummary = message.result;
+          task.summary = message.result;
           this.writeMemory(task, project, session.lastPrompt, message.result);
           await this.afterDevTurn(task, project);
         } else if (session.interrupted) {
@@ -803,7 +822,7 @@ export class TaskRunner {
 
   /** After a successful dev turn: nudge an uncommitted tree once, else put new commits on the QA pile. */
   private async afterDevTurn(task: StoredTask, project: Project): Promise<void> {
-    if (task.readOnly || !task.maxReviewRounds) return;
+    if (task.readOnly) return;
     try {
       let dirty = false;
       for (const repo of project.repos) {
@@ -829,6 +848,13 @@ export class TaskRunner {
         return;
       }
       task.commitNudged = false;
+      if (!task.maxReviewRounds) {
+        // QA is off for this project: committed work goes straight to the owner's desk.
+        task.reviewedHeads = heads;
+        task.stage = 'ready';
+        await this.buildHandoff(task, project);
+        return;
+      }
       task.stage = 'review_queued';
       this.reviewQueue.push(task.id);
     } catch (err) {
@@ -885,7 +911,7 @@ export class TaskRunner {
           base: task.baseCommits?.[r.name] ?? r.defaultBranch,
           testCommand: r.testCommand,
         })),
-        devSummary: task.lastSummary,
+        devSummary: task.summary,
         docsDir: path.join(project.dir!, 'docs'),
         memoryDir: path.join(project.dir!, 'memory'),
         round,
@@ -943,8 +969,10 @@ export class TaskRunner {
       const max = task.maxReviewRounds ?? DEFAULT_MAX_REVIEW_ROUNDS;
       if (verdict.approved) {
         task.stage = 'approved';
+        await this.buildHandoff(task, project);
       } else if (task.autoRounds >= max) {
         task.stage = 'escalated';
+        await this.buildHandoff(task, project);
       } else {
         task.stage = 'changes_requested';
         this.sendMessage(task.id, feedbackMessage(record, max), false);
@@ -957,11 +985,84 @@ export class TaskRunner {
           : String(err);
       task.reviews = [...(task.reviews ?? []), { round, at: Date.now(), error }];
       task.stage = 'escalated';
+      if (project) await this.buildHandoff(task, project);
       console.error(`[Pixel Agents] Task ${task.id} review ${round} failed: ${error}`);
     } finally {
       this.reviewAborts.delete(task.id);
       this.changed();
     }
+  }
+
+  // ── The owner's desk ──
+
+  /** Everything the owner needs to take each repo's branch from here: links, names, push command. */
+  private async buildHandoff(task: StoredTask, project: Project): Promise<void> {
+    const handoff: RepoHandoff[] = [];
+    for (const repo of project.repos) {
+      const worktree = repoWorktree(task, project, repo);
+      const base = (task.baseRefs?.[repo.name] ?? repo.defaultBranch).replace(/^origin\//, '');
+      const remote = await run('git', ['-C', repo.path, 'remote', 'get-url', 'origin']).then(
+        (r) => r.stdout.trim(),
+        () => '',
+      );
+      const start = task.baseCommits?.[repo.name];
+      const commits = start
+        ? await run('git', ['-C', worktree, 'rev-list', '--count', `${start}..HEAD`]).then(
+            (r) => Number(r.stdout.trim()) || 0,
+            () => undefined,
+          )
+        : undefined;
+      handoff.push({
+        repo: repo.name,
+        branch: task.branch!,
+        baseBranch: base,
+        ...repoLinks(remote, task.branch!, base),
+        pushCommand: `git -C "${repo.path}" push -u origin ${task.branch}`,
+        worktree,
+        commits,
+      });
+    }
+    task.handoff = handoff;
+  }
+
+  /**
+   * The owner is done with a desk task: its session ends and its worktrees (dev + QA) are removed.
+   * The branches stay in the repo, so nothing committed is lost; the task leaves the desk.
+   */
+  async complete(taskId: string): Promise<void> {
+    const task = this.taskById(taskId);
+    if (!task) throw new Error('Unknown task');
+    if (task.status === 'running' || task.status === 'queued' || task.status === 'preparing') {
+      throw new Error('The agent is still working on this task; stop it first');
+    }
+    const project = getProject(task.projectId);
+    this.sessions.get(taskId)?.end();
+    this.clearIdleClose(taskId);
+    if (project && task.worktree && !task.readOnly) {
+      for (const repo of project.repos) {
+        for (const dir of [
+          repoWorktree(task, project, repo),
+          this.reviewWorktree(task, project, repo),
+        ]) {
+          if (!fs.existsSync(dir)) continue;
+          await run('git', ['-C', repo.path, 'worktree', 'remove', '--force', dir]).catch(
+            (err: unknown) =>
+              console.warn(`[Pixel Agents] Task ${taskId}: could not remove ${dir}`, err),
+          );
+        }
+        await run('git', ['-C', repo.path, 'worktree', 'prune']).catch(() => undefined);
+      }
+      // Workspace folders of multi-repo tasks are empty now; leave anything unexpected alone.
+      for (const dir of [task.worktree, `${task.worktree}-qa`]) {
+        try {
+          fs.rmdirSync(dir);
+        } catch {
+          /* already gone, or not empty */
+        }
+      }
+    }
+    task.stage = 'delivered';
+    this.changed();
   }
 
   /** Diff of every repo against its merge base with the default branch — what a PR would show. */
@@ -1000,6 +1101,8 @@ export class TaskRunner {
       const git = (...args: string[]) => run('git', ['-C', repo.path, ...args]);
       const dest = repoWorktree(task, project, repo);
       let base = baseBranches[repo.name];
+      const recordBase = (ref: string) =>
+        ((task as StoredTask).baseRefs = { ...(task as StoredTask).baseRefs, [repo.name]: ref });
       if (base) {
         // Picked from listBranches, which already fetched; it must still resolve to a commit.
         await git('rev-parse', '--verify', '--quiet', `${base}^{commit}`).catch(() => {
@@ -1019,6 +1122,7 @@ export class TaskRunner {
       }
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       await git('worktree', 'add', '-b', task.branch!, dest, base);
+      recordBase(base);
       const started = (await run('git', ['-C', dest, 'rev-parse', 'HEAD'])).stdout.trim();
       task.baseCommits = { ...task.baseCommits, [repo.name]: started };
       if (repo.setupCommand) {

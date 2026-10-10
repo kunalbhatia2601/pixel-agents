@@ -368,3 +368,7 @@ export const WORKING_WORDS = [
   'Wrangling',
   'Simmering',
 ];
+
+// ── Owner desk ──────────────────────────────────────────────────
+/** How long a copy button shows "Copied ✓". */
+export const COPIED_FEEDBACK_MS = 1500;

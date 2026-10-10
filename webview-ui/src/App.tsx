@@ -11,6 +11,7 @@ import { EditActionBar } from './components/EditActionBar.js';
 import { ErrorToast } from './components/ErrorToast.js';
 import { IntroBubble } from './components/IntroBubble.js';
 import { MigrationNotice } from './components/MigrationNotice.js';
+import { OwnerDeskModal } from './components/OwnerDeskModal.js';
 import { ProjectRoomModal } from './components/ProjectRoomModal.js';
 import { SettingsModal } from './components/SettingsModal.js';
 import { type TaskBoardView, TasksModal } from './components/TasksModal.js';
@@ -25,7 +26,7 @@ import { useIntroTour } from './hooks/useIntroTour.js';
 import { NEW_PROJECT, useTasks } from './hooks/useTasks.js';
 import { OfficeCanvas } from './office/components/OfficeCanvas.js';
 import { ProjectShelves } from './office/components/ProjectShelves.js';
-import { QaPile } from './office/components/QaPile.js';
+import { RoomPile } from './office/components/RoomPile.js';
 import { TaskRoomBoards } from './office/components/TaskRoomBoards.js';
 import { ToolOverlay } from './office/components/ToolOverlay.js';
 import { EditorState } from './office/editor/editorState.js';
@@ -37,6 +38,7 @@ import { migrateLayoutColors } from './office/layout/layoutSerializer.js';
 import { getPetCount } from './office/sprites/petSpriteData.js';
 import { EditTool, type OfficeLayout } from './office/types.js';
 import { isBrowserRuntime, isE2E } from './runtime.js';
+import { onDesk } from './taskStatus.js';
 import { installTestHooks } from './testHooks.js';
 import { transport } from './transport/index.js';
 
@@ -82,6 +84,7 @@ function App() {
   const openProjects = (edit: Project | null) => setProjectsView({ edit, key: Date.now() });
   const isProjectsOpen = projectsView !== null;
   const [chatTarget, setChatTarget] = useState<ChatTarget | null>(null);
+  const [isDeskOpen, setIsDeskOpen] = useState(false);
   const chatTask = chatTarget?.taskId
     ? taskState.tasks.find((t) => t.id === chatTarget.taskId)
     : undefined;
@@ -479,13 +482,34 @@ function App() {
           )}
 
           {isBrowserRuntime && !editor.isEditMode && (
-            <QaPile
+            <RoomPile
               officeState={officeState}
               containerRef={containerRef}
               zoom={editor.zoom}
               panRef={editor.panRef}
-              tasks={taskState.tasks}
+              area="QA / Review"
+              items={taskState.tasks.filter((t) => t.stage === 'review_queued')}
+              label={`${taskState.tasks.filter((t) => t.stage === 'review_queued').length} to review${
+                taskState.tasks.some((t) => t.stage === 'reviewing')
+                  ? ` · ${taskState.tasks.filter((t) => t.stage === 'reviewing').length} in review`
+                  : ''
+              }`}
+              heading="Waiting for QA"
               onOpen={() => openBoard({ tab: 'live' })}
+            />
+          )}
+
+          {isBrowserRuntime && !editor.isEditMode && (
+            <RoomPile
+              officeState={officeState}
+              containerRef={containerRef}
+              zoom={editor.zoom}
+              panRef={editor.panRef}
+              area="Owner"
+              items={taskState.tasks.filter(onDesk)}
+              label={`${taskState.tasks.filter(onDesk).length} for you`}
+              heading="On your desk"
+              onOpen={() => setIsDeskOpen(true)}
             />
           )}
 
@@ -636,6 +660,17 @@ function App() {
         tasks={taskState.tasks}
       />
 
+      <OwnerDeskModal
+        isOpen={isDeskOpen}
+        onClose={() => setIsDeskOpen(false)}
+        tasks={taskState.tasks}
+        projects={taskState.projects}
+        onOpenChat={(task) => {
+          setIsDeskOpen(false);
+          setChatTarget({ taskId: task.id });
+        }}
+      />
+
       <ErrorToast error={taskState.error} onDismiss={taskState.clearError} />
 
       <VersionIndicator
@@ -714,6 +749,7 @@ function App() {
             isTasksOpen ||
             isProjectsOpen ||
             chatTarget !== null ||
+            isDeskOpen ||
             isChangelogOpen ||
             isHooksInfoOpen ||
             showMigrationNotice ||

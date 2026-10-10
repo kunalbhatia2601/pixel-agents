@@ -302,6 +302,7 @@ export function handleClientMessage(
     case 'pickFolder':
     case 'listBranches':
     case 'setAgentMode':
+    case 'completeTask':
       handleTaskMessage(msg, send, ctx);
       break;
 
@@ -502,6 +503,14 @@ function handleTaskMessage(
         );
         break;
       }
+      case 'completeTask':
+        tasks.complete(String(msg.taskId)).catch((err: unknown) =>
+          send({
+            type: 'actionError',
+            message: err instanceof Error ? err.message : String(err),
+          }),
+        );
+        break;
       case 'setAgentMode': {
         const mode = validMode(msg.mode);
         if (!mode) throw new Error('Unknown permission mode');
