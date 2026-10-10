@@ -8,6 +8,7 @@ import { promisify } from 'util';
 import type {
   AgentSettings,
   BranchMode,
+  PermissionMode,
   Project,
   ProjectRepo,
   RepoBranches,
@@ -45,6 +46,47 @@ const worktreesRoot = () => path.join(root(), 'worktrees');
 const SETUP_TIMEOUT_MS = 10 * 60_000;
 const DETAIL_MAX_CHARS = 2000;
 
+/** The tool a Plan-mode agent calls to present its plan for approval. */
+const EXIT_PLAN_MODE = 'ExitPlanMode';
+/** Dev sessions auto-accept edits unless the owner picks another mode. */
+const DEFAULT_DEV_MODE: PermissionMode = 'acceptEdits';
+/** Modes that can't run writing commands unasked: the only ones allowed in the owner's checkout. */
+const READ_ONLY_MODES: ReadonlySet<PermissionMode> = new Set(['default', 'plan', 'dontAsk']);
+/** A session waiting this long for the owner is ended; the next message resumes it with full context. */
+export const SESSION_IDLE_CLOSE_MS = 30 * 60_000;
+
+/** The task's permission mode, falling back per kind; read-only tasks never get a writing-capable mode. */
+function modeFor(task: Task): PermissionMode {
+  const chosen = task.agent?.permissionMode;
+  if (task.readOnly) return chosen && READ_ONLY_MODES.has(chosen) ? chosen : 'default';
+  return chosen ?? DEFAULT_DEV_MODE;
+}
+
+const FILE_EDIT_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit']);
+
+/**
+ * For a branch task, the path a file-editing tool targets outside the task's worktree (and the
+ * project's docs/memory folder), or undefined when the edit is in bounds or isn't a file edit.
+ */
+export function editOutsideWorkspace(
+  task: Task,
+  project: Project,
+  toolName: string,
+  input: Record<string, unknown>,
+): string | undefined {
+  if (task.readOnly || !FILE_EDIT_TOOLS.has(toolName)) return undefined;
+  const target = input.file_path ?? input.notebook_path;
+  if (typeof target !== 'string') return undefined;
+  const resolved = path.resolve(task.worktree!, target);
+  const inside = (root: string) => resolved === root || resolved.startsWith(root + path.sep);
+  const allowed = [
+    task.worktree!,
+    project.dir,
+    path.join(os.homedir(), '.claude', 'plans'), // Plan mode writes its plan there
+  ];
+  return allowed.some((root) => root && inside(path.resolve(root))) ? undefined : resolved;
+}
+
 /** The tool agents use to ask the user multiple-choice questions. */
 const ASK_USER_QUESTION = 'AskUserQuestion';
 
@@ -54,6 +96,8 @@ export interface PermissionDecision {
   message?: string;
   /** AskUserQuestion: question text -> chosen label(s). */
   answers?: Record<string, string>;
+  /** Approving a plan (ExitPlanMode): the mode the agent continues in. */
+  mode?: PermissionMode;
 }
 
 interface PendingPermission {
@@ -141,6 +185,7 @@ interface Session {
   push: (text: string) => void;
   end: () => void;
   interrupt: () => Promise<unknown>;
+  setMode: (mode: PermissionMode) => Promise<void>;
   /** Set by interrupt(): the next non-success result is the user's stop, not a failure. */
   interrupted: boolean;
 }
@@ -213,6 +258,7 @@ export class TaskRunner {
   private devQueue: string[] = [];
   private reviewQueue: string[] = [];
   private reviewAborts = new Map<string, AbortController>();
+  private idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private pumping = false;
   private aborts = new Map<string, AbortController>();
   private permissions = new Map<string, PendingPermission>();
@@ -320,6 +366,26 @@ export class TaskRunner {
     this.devQueue.push(task.id);
     this.changed();
     return task;
+  }
+
+  // ── Idle sessions ──
+
+  private scheduleIdleClose(taskId: string): void {
+    this.clearIdleClose(taskId);
+    const timer = setTimeout(() => {
+      this.idleTimers.delete(taskId);
+      const task = this.taskById(taskId);
+      // Only a session that is still waiting: work in progress or queued is never cut.
+      if (task?.status === 'running' || task?.status === 'queued') return;
+      this.sessions.get(taskId)?.end();
+    }, SESSION_IDLE_CLOSE_MS);
+    timer.unref?.(); // never keeps the server process alive on its own
+    this.idleTimers.set(taskId, timer);
+  }
+
+  private clearIdleClose(taskId: string): void {
+    clearTimeout(this.idleTimers.get(taskId));
+    this.idleTimers.delete(taskId);
   }
 
   // ── Scheduler: Dev Team seats and QA slots ──
@@ -501,6 +567,37 @@ export class TaskRunner {
     this.permissions.delete(requestId);
     pending.resolve(decision);
     this.store.broadcast({ type: 'permissionResolved', requestId });
+    // An approved plan carries on in the mode the owner chose (e.g. auto-accept edits).
+    if (decision.allow && decision.mode) {
+      try {
+        this.setMode(pending.taskId, decision.mode);
+      } catch (err) {
+        console.warn(`[Pixel Agents] Task ${pending.taskId}: mode not applied`, err);
+      }
+    }
+  }
+
+  /**
+   * Switches a task agent's permission mode: live if its session is running, and remembered so a
+   * resumed session starts in it. Read-only tasks sit in the user's checkout, so modes that would run
+   * writing commands unasked (auto, bypass) are refused there.
+   */
+  setMode(taskId: string, mode: PermissionMode): void {
+    const task = this.taskById(taskId);
+    if (!task) throw new Error('Unknown task');
+    if (task.readOnly && !READ_ONLY_MODES.has(mode)) {
+      throw new Error(
+        "Read-only tasks run in your checkout: only Ask, Plan or Don't ask are allowed",
+      );
+    }
+    task.agent = { ...task.agent, permissionMode: mode };
+    this.sessions
+      .get(taskId)
+      ?.setMode(mode)
+      .catch((err: unknown) =>
+        console.warn(`[Pixel Agents] Task ${taskId}: mode switch failed`, err),
+      );
+    this.changed();
   }
 
   /** Runs the task's agent. `resume` continues its ended session in the existing worktree. */
@@ -588,10 +685,20 @@ export class TaskRunner {
             project.dir!,
             ...(task.readOnly ? project.repos.slice(1).map((r) => r.path) : []),
           ],
-          permissionMode: task.readOnly ? 'default' : 'acceptEdits',
+          permissionMode: modeFor(task),
+          // Lets the owner switch a branch task to Bypass later; never for a task in their checkout.
+          allowDangerouslySkipPermissions: !task.readOnly,
           allowedTools: task.readOnly ? [] : projectCommandRules(project),
-          canUseTool: (toolName, input, { signal }) =>
-            this.askPermission(task, sessionId, toolName, input, signal).then((d) =>
+          canUseTool: (toolName, input, { signal }) => {
+            const outside = editOutsideWorkspace(task, project, toolName, input);
+            if (outside) {
+              // Refused without bothering the owner: a branch task only edits its own worktree.
+              return Promise.resolve({
+                behavior: 'deny' as const,
+                message: `${outside} is outside your worktree (${task.worktree}). Edit files only inside it.`,
+              });
+            }
+            return this.askPermission(task, sessionId, toolName, input, signal).then((d) =>
               d.allow
                 ? {
                     behavior: 'allow' as const,
@@ -602,7 +709,8 @@ export class TaskRunner {
                     behavior: 'deny' as const,
                     message: d.message?.trim() || 'The user denied this action.',
                   },
-            ),
+            );
+          },
           hooks: Object.fromEntries(
             CLAUDE_HOOK_EVENTS.map((event) => [event, [{ hooks: [forward] }]]),
           ),
@@ -614,10 +722,12 @@ export class TaskRunner {
         lastPrompt: prompt,
         push: (text) => {
           session.lastPrompt = text;
+          this.clearIdleClose(task.id);
           input.push(text);
         },
         end: input.end,
         interrupt: () => stream.interrupt(),
+        setMode: (mode) => stream.setPermissionMode(mode),
         interrupted: false,
       };
       this.sessions.set(task.id, session);
@@ -641,6 +751,9 @@ export class TaskRunner {
           task.error = message.subtype;
         }
         session.interrupted = false;
+        // Waiting for the owner now: end the process if nobody writes for a while (a message resumes it).
+        // (The timer re-checks on firing: a turn started meanwhile, e.g. QA feedback, is never cut.)
+        this.scheduleIdleClose(task.id);
         this.changed();
       }
       if (task.status === 'running') task.status = abort.signal.aborted ? 'stopped' : 'done';
@@ -651,6 +764,7 @@ export class TaskRunner {
     } finally {
       this.aborts.delete(task.id);
       this.sessions.delete(task.id);
+      this.clearIdleClose(task.id);
       task.sessionOpen = false;
       for (const [requestId, p] of this.permissions) {
         if (p.taskId === task.id) this.answerPermission(requestId, { allow: false });
@@ -933,7 +1047,7 @@ export class TaskRunner {
       multi
         ? `You are working on the task "${task.title}". Your working folder holds one git worktree per repo, each on branch \`${task.branch}\`:`
         : `You are working on the task "${task.title}" in a dedicated git worktree on branch \`${task.branch}\`${startedAt(task, project.repos[0])}.`,
-      `This is an isolated copy, not the user's checkout${multi ? 's' : ''} (${project.repos.map((r) => r.path).join(', ')}): their uncommitted changes are not here.`,
+      `This is an isolated copy of the repo${multi ? 's' : ''}, not the user's own checkout: their uncommitted changes are not here. Never read or write anything outside your working folder (${task.worktree}) except the project docs and memory below.`,
     );
     for (const repo of project.repos) {
       const where = multi ? `- \`${repo.name}/\`${startedAt(task, repo)}` : '';
@@ -1001,8 +1115,13 @@ export class TaskRunner {
     signal: AbortSignal,
   ): Promise<PermissionDecision> {
     const requestId = crypto.randomUUID();
-    const detail =
-      typeof input.command === 'string' ? input.command : JSON.stringify(input, null, 2);
+    // A plan to approve is shown whole; other requests show the command or the raw input.
+    const isPlan = toolName === EXIT_PLAN_MODE && typeof input.plan === 'string';
+    const detail = isPlan
+      ? (input.plan as string)
+      : typeof input.command === 'string'
+        ? input.command
+        : JSON.stringify(input, null, 2);
     let agentId: number | undefined;
     for (const agent of this.store.values()) if (agent.sessionId === sessionId) agentId = agent.id;
     const message = {
@@ -1011,7 +1130,7 @@ export class TaskRunner {
       taskId: task.id,
       taskTitle: task.title,
       toolName,
-      detail: detail.slice(0, DETAIL_MAX_CHARS),
+      detail: isPlan ? detail : detail.slice(0, DETAIL_MAX_CHARS),
       agentId,
       questions: toolName === ASK_USER_QUESTION ? input.questions : undefined,
     };

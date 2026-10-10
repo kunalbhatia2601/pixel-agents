@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 
-import type { ChatEntry, PermissionAsked, Task, UsageTotals } from '../../../core/src/messages.js';
+import type {
+  ChatEntry,
+  PermissionAsked,
+  PermissionMode,
+  Task,
+  UsageTotals,
+} from '../../../core/src/messages.js';
+import { effectiveMode, PERMISSION_MODES, READ_ONLY_MODES } from '../permissionModes.js';
 import { STAGE_CLASS, stageLabel } from '../taskStatus.js';
 import { transport } from '../transport/index.js';
 import { formatCost } from '../usageFormat.js';
@@ -151,6 +158,33 @@ export function AgentChatModal({
               </Button>
             )}
           </div>
+          {task && controllable && (
+            <label className="flex items-center gap-4 text-sm">
+              Mode
+              <select
+                className={`${inputClass} w-auto py-0`}
+                value={effectiveMode(task)}
+                onChange={(e) =>
+                  transport.send({
+                    type: 'setAgentMode',
+                    ...address,
+                    mode: e.target.value as PermissionMode,
+                  })
+                }
+              >
+                {PERMISSION_MODES.filter((m) => !task.readOnly || READ_ONLY_MODES.has(m.value)).map(
+                  (m) => (
+                    <option key={m.value} value={m.value} title={m.hint}>
+                      {m.label}
+                    </option>
+                  ),
+                )}
+              </select>
+              <span className="text-xs text-text-muted">
+                {PERMISSION_MODES.find((m) => m.value === effectiveMode(task))?.hint}
+              </span>
+            </label>
+          )}
           {task && (
             <span className="text-xs text-text-muted">
               {task.readOnly ? (

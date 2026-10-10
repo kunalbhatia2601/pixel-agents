@@ -1,7 +1,8 @@
 import { useState } from 'react';
 
-import type { AgentQuestion, PermissionAsked } from '../../../core/src/messages.js';
+import type { AgentQuestion, PermissionAsked, PermissionMode } from '../../../core/src/messages.js';
 import { transport } from '../transport/index.js';
+import { ChatMarkdown } from './ChatMarkdown.js';
 import { inputClass } from './ProjectRoomModal.js';
 import { Button } from './ui/Button.js';
 
@@ -159,6 +160,49 @@ function QuestionCard({ request }: { request: PermissionAsked }) {
   );
 }
 
+/** A Plan-mode agent's plan: read it, then approve into a mode or send it back with feedback. */
+function PlanCard({ request }: { request: PermissionAsked }) {
+  const [feedback, setFeedback] = useState('');
+  const approve = (mode: PermissionMode) =>
+    transport.send({ type: 'answerPermission', requestId: request.requestId, allow: true, mode });
+  return (
+    <div className="border-2 border-accent p-6 flex flex-col gap-4" role="dialog">
+      <span className="text-accent-bright">The agent&apos;s plan — approve to let it start</span>
+      <div className="max-h-[300px] overflow-y-auto bg-bg-dark p-6">
+        <ChatMarkdown text={request.detail} />
+      </div>
+      <input
+        className={inputClass}
+        placeholder="What should change in the plan? (for Keep planning)"
+        value={feedback}
+        onChange={(e) => setFeedback(e.target.value)}
+      />
+      <div className="flex flex-wrap gap-4 justify-end">
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() =>
+            transport.send({
+              type: 'answerPermission',
+              requestId: request.requestId,
+              allow: false,
+              message: feedback.trim() || 'Keep planning: the plan is not approved yet.',
+            })
+          }
+        >
+          Keep planning
+        </Button>
+        <Button size="sm" onClick={() => approve('default')} title="Then ask before each edit">
+          Approve, ask for edits
+        </Button>
+        <Button size="sm" variant="accent" onClick={() => approve('acceptEdits')}>
+          Approve, auto-accept edits
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 /** An agent's open approvals and questions, shown inside its chat. */
 export function PendingRequests({ requests }: { requests: PermissionAsked[] }) {
   if (!requests.length) return null;
@@ -167,6 +211,8 @@ export function PendingRequests({ requests }: { requests: PermissionAsked[] }) {
       {requests.map((r) =>
         r.questions?.length ? (
           <QuestionCard key={r.requestId} request={r} />
+        ) : r.toolName === 'ExitPlanMode' ? (
+          <PlanCard key={r.requestId} request={r} />
         ) : (
           <ApprovalCard key={r.requestId} request={r} />
         ),

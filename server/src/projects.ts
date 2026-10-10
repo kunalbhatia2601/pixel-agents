@@ -122,6 +122,14 @@ export function saveProject(input: Project): Project {
 
 const EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 const THINKING = new Set(['adaptive', 'disabled']);
+export const PERMISSION_MODES: ReadonlySet<string> = new Set([
+  'default',
+  'acceptEdits',
+  'plan',
+  'auto',
+  'dontAsk',
+  'bypassPermissions',
+]);
 
 /** Keeps only known, non-empty fields, so empty form inputs mean "inherit". Undefined when nothing is set. */
 export function cleanAgentSettings(input: AgentSettings | undefined): AgentSettings | undefined {
@@ -130,6 +138,9 @@ export function cleanAgentSettings(input: AgentSettings | undefined): AgentSetti
   if (model) out.model = model;
   if (input?.effort && EFFORTS.has(input.effort)) out.effort = input.effort;
   if (input?.thinking && THINKING.has(input.thinking)) out.thinking = input.thinking;
+  if (input?.permissionMode && PERMISSION_MODES.has(input.permissionMode)) {
+    out.permissionMode = input.permissionMode;
+  }
   return Object.keys(out).length ? out : undefined;
 }
 

@@ -1,6 +1,6 @@
 import { execFile } from 'child_process';
 
-import type { AgentSettings, Project, Task } from '../../core/src/messages.js';
+import type { AgentSettings, PermissionMode, Project, Task } from '../../core/src/messages.js';
 import type { HookProvider } from '../../core/src/provider.js';
 import { resendAgentActivity } from './agentActivityResend.js';
 import { ChatTail } from './agentChat.js';
@@ -23,6 +23,7 @@ import {
   getAgentDefaults,
   getReviewerDefaults,
   listProjects,
+  PERMISSION_MODES,
   saveAgentDefaults,
   saveProject,
 } from './projects.js';
@@ -300,6 +301,7 @@ export function handleClientMessage(
     case 'interruptAgent':
     case 'pickFolder':
     case 'listBranches':
+    case 'setAgentMode':
       handleTaskMessage(msg, send, ctx);
       break;
 
@@ -386,6 +388,12 @@ function standaloneConsentEffects(
       }
     },
   };
+}
+
+function validMode(value: unknown): PermissionMode | undefined {
+  return typeof value === 'string' && PERMISSION_MODES.has(value)
+    ? (value as PermissionMode)
+    : undefined;
 }
 
 /** Untrusted client input → a plain string map, or undefined. */
@@ -493,6 +501,12 @@ function handleTaskMessage(
         );
         break;
       }
+      case 'setAgentMode': {
+        const mode = validMode(msg.mode);
+        if (!mode) throw new Error('Unknown permission mode');
+        tasks.setMode(taskIdFor(ctx, msg), mode);
+        break;
+      }
       case 'listBranches': {
         const requestId = String(msg.requestId);
         tasks.listBranches(String(msg.projectId)).then(
@@ -549,6 +563,7 @@ function handleTaskMessage(
           allow: msg.allow === true,
           message: typeof msg.message === 'string' ? msg.message : undefined,
           answers: stringRecord(msg.answers),
+          mode: validMode(msg.mode),
         });
         break;
     }

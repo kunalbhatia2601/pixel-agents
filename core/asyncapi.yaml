@@ -166,6 +166,7 @@ components:
         - $ref: '#/components/schemas/InterruptAgent'
         - $ref: '#/components/schemas/PickFolder'
         - $ref: '#/components/schemas/ListBranches'
+        - $ref: '#/components/schemas/SetAgentMode'
       discriminator: type
 
     # ── Server message variants ────────────────────────────────────
@@ -1249,6 +1250,8 @@ components:
           description: 'Answers to questions: question text -> chosen label(s), comma-separated.'
           additionalProperties:
             type: string
+        mode:
+          $ref: '#/components/schemas/PermissionMode'
 
     Project:
       description: A workspace of one or more repos (like a VS Code multi-root workspace).
@@ -1313,10 +1316,20 @@ components:
           $ref: '#/components/schemas/EffortLevel'
         thinking:
           $ref: '#/components/schemas/ThinkingMode'
+        permissionMode:
+          $ref: '#/components/schemas/PermissionMode'
 
     EffortLevel:
       type: string
       enum: [low, medium, high, xhigh, max]
+
+    PermissionMode:
+      description: >-
+        How the agent's tool use is approved. default = ask for risky actions, acceptEdits = file edits
+        run unasked, plan = read and plan only until a plan is approved, auto = a classifier approves or
+        denies, dontAsk = anything not pre-approved is denied, bypassPermissions = no checks.
+      type: string
+      enum: [default, acceptEdits, plan, auto, dontAsk, bypassPermissions]
 
     ThinkingMode:
       type: string
@@ -1377,6 +1390,21 @@ components:
           description: The task this agent ran, if any; its usage and changes are authoritative.
         usage:
           $ref: '#/components/schemas/UsageTotals'
+
+    SetAgentMode:
+      description: Switch a task agent's permission mode, live if it is running. Privileged.
+      type: object
+      additionalProperties: false
+      required: [type, mode]
+      properties:
+        type:
+          const: setAgentMode
+        id:
+          type: integer
+        taskId:
+          type: string
+        mode:
+          $ref: '#/components/schemas/PermissionMode'
 
     ListBranches:
       description: Fetch every remote of each project repo, then list its branches. Privileged.

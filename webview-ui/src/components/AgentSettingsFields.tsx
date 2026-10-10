@@ -1,4 +1,10 @@
-import type { AgentSettings, EffortLevel, ThinkingMode } from '../../../core/src/messages.js';
+import type {
+  AgentSettings,
+  EffortLevel,
+  PermissionMode,
+  ThinkingMode,
+} from '../../../core/src/messages.js';
+import { PERMISSION_MODES } from '../permissionModes.js';
 import { inputClass } from './ProjectRoomModal.js';
 
 const MODEL_ALIASES = ['fable', 'opus', 'sonnet', 'haiku'];
@@ -15,7 +21,7 @@ interface AgentSettingsFieldsProps {
 export function AgentSettingsFields({ value, onChange, inheritLabel }: AgentSettingsFieldsProps) {
   const v = value ?? {};
   return (
-    <div className="grid grid-cols-3 gap-6">
+    <div className="grid grid-cols-2 gap-6">
       <label className="flex flex-col gap-2">
         Model
         <input
@@ -60,6 +66,26 @@ export function AgentSettingsFields({ value, onChange, inheritLabel }: AgentSett
           <option value="">{inheritLabel}</option>
           <option value="adaptive">adaptive</option>
           <option value="disabled">off</option>
+        </select>
+      </label>
+      <label className="flex flex-col gap-2">
+        Mode
+        <select
+          className={inputClass}
+          value={v.permissionMode ?? ''}
+          onChange={(e) =>
+            onChange({
+              ...v,
+              permissionMode: (e.target.value || undefined) as PermissionMode | undefined,
+            })
+          }
+        >
+          <option value="">{inheritLabel}</option>
+          {PERMISSION_MODES.map((m) => (
+            <option key={m.value} value={m.value} title={m.hint}>
+              {m.label}
+            </option>
+          ))}
         </select>
       </label>
     </div>

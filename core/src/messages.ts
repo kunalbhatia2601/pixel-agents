@@ -83,7 +83,8 @@ export type ClientMessage =
   | SendAgentMessage
   | InterruptAgent
   | PickFolder
-  | ListBranches;
+  | ListBranches
+  | SetAgentMode;
 
 export interface ProviderCapabilities {
   type: 'providerCapabilities';
@@ -362,11 +363,15 @@ export interface AgentSettings {
   model?: string;
   effort?: EffortLevel;
   thinking?: ThinkingMode;
+  permissionMode?: PermissionMode;
 }
 
 export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 export type ThinkingMode = 'adaptive' | 'disabled';
+
+export type PermissionMode =
+  'default' | 'acceptEdits' | 'plan' | 'auto' | 'dontAsk' | 'bypassPermissions';
 
 export interface TasksLoaded {
   type: 'tasksLoaded';
@@ -672,6 +677,7 @@ export interface AnswerPermission {
   allow: boolean;
   message?: string;
   answers?: Record<string, string>;
+  mode?: PermissionMode;
 }
 
 export interface SaveAgentDefaults {
@@ -714,4 +720,11 @@ export interface ListBranches {
   type: 'listBranches';
   requestId: string;
   projectId: string;
+}
+
+export interface SetAgentMode {
+  type: 'setAgentMode';
+  id?: number;
+  taskId?: string;
+  mode: PermissionMode;
 }
