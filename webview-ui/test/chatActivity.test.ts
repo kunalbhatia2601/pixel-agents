@@ -51,3 +51,19 @@ test('other agents follow the office: nothing shown when idle', () => {
   assert.equal(chatActivity({ isReviewer: false, agentActive: false }).working, false);
   assert.equal(chatActivity({ isReviewer: false, agentActive: true }).working, true);
 });
+
+test('resume command: the task folder plus its session, safely quoted; none once Done removed it', async () => {
+  const { resumeCommand } = await import('../src/taskStatus.js');
+  const t = task({ sessionId: 'abc-123', worktree: '/wt/vh/c231' });
+  assert.equal(resumeCommand(t), 'cd "/wt/vh/c231" && claude --resume abc-123');
+  assert.equal(
+    resumeCommand(task({ sessionId: 's', worktree: '/a "b" $HOME `x`' })),
+    'cd "/a \\"b\\" \\$HOME \\`x\\`" && claude --resume s',
+  );
+  assert.equal(resumeCommand(task({ worktree: '/wt' })), undefined, 'no session yet');
+  assert.equal(resumeCommand({ ...t, stage: 'delivered' }), undefined, 'worktree removed by Done');
+  assert.ok(
+    resumeCommand({ ...t, stage: 'delivered', readOnly: true }),
+    'read-only: your own repo stays',
+  );
+});

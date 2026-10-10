@@ -8,10 +8,11 @@ import type {
   UsageTotals,
 } from '../../../core/src/messages.js';
 import { effectiveMode, PERMISSION_MODES, READ_ONLY_MODES } from '../permissionModes.js';
-import { chatActivity, STAGE_CLASS, stageLabel } from '../taskStatus.js';
+import { chatActivity, resumeCommand, STAGE_CLASS, stageLabel } from '../taskStatus.js';
 import { transport } from '../transport/index.js';
 import { formatCost } from '../usageFormat.js';
 import { ChatMarkdown } from './ChatMarkdown.js';
+import { CopyField } from './CopyField.js';
 import { PendingRequests } from './PendingRequests.js';
 import { inputClass } from './ProjectRoomModal.js';
 import { ReviewHistory } from './ReviewHistory.js';
@@ -222,6 +223,18 @@ export function AgentChatModal({
           )}
           {task?.stage && (
             <span className={`text-sm ${STAGE_CLASS[task.stage]}`}>{stageLabel(task)}</span>
+          )}
+          {task && !isReviewer && resumeCommand(task) && (
+            <div className="flex flex-col gap-1">
+              <CopyField label="Open in terminal" value={resumeCommand(task)!} />
+              {task.sessionOpen && (
+                <span className="text-xs text-warning">
+                  The office still has this session open: press End session in the task list first
+                  (or it closes itself after 30 idle minutes), so two Claude processes never write
+                  to the same session.
+                </span>
+              )}
+            </div>
           )}
           {task?.reviewUsage && (
             <span className="text-xs text-text-muted">

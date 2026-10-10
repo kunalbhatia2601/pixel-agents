@@ -1,5 +1,5 @@
 import type { Project, Task } from '../../../core/src/messages.js';
-import { onDesk, STAGE_CLASS, stageLabel, taskUsage } from '../taskStatus.js';
+import { onDesk, resumeCommand, STAGE_CLASS, stageLabel, taskUsage } from '../taskStatus.js';
 import { transport } from '../transport/index.js';
 import { ChatMarkdown } from './ChatMarkdown.js';
 import { CopyField } from './CopyField.js';
@@ -70,6 +70,18 @@ function DeskCard({
         ))}
         {!task.handoff?.length && (
           <span className="text-sm text-text-muted">Collecting the branch details…</span>
+        )}
+        {resumeCommand(task) && (
+          <div className="flex flex-col gap-1">
+            <CopyField label="Open in terminal" value={resumeCommand(task)!} />
+            {task.sessionOpen && (
+              <span className="text-xs text-warning">
+                The office still has this session open: press End session in the task list first (or
+                it closes itself after 30 idle minutes), so two Claude processes never write to the
+                same session.
+              </span>
+            )}
+          </div>
         )}
       </div>
 

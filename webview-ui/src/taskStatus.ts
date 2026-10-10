@@ -106,3 +106,15 @@ export function chatActivity(ctx: {
     label: ctx.runningToolName ? `Running ${ctx.runningToolName}` : undefined,
   };
 }
+
+/**
+ * The terminal command that reopens a task's Claude session with its full history. Claude Code finds
+ * sessions per folder, so it must run from the task's folder: its worktree (or the owner's repo for a
+ * read-only task). None once Done removed the worktree, or before a session exists.
+ */
+export function resumeCommand(task: Task): string | undefined {
+  if (!task.sessionId || !task.worktree) return undefined;
+  if (task.stage === 'delivered' && !task.readOnly) return undefined;
+  const dir = task.worktree.replace(/(["\\$`])/g, '\\$1');
+  return `cd "${dir}" && claude --resume ${task.sessionId}`;
+}
