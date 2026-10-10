@@ -344,3 +344,27 @@ export const QA_PILE_SHEET_OFFSET_PX = 3;
 // ── Idle vanish ─────────────────────────────────────────────────
 /** An agent idle this long fades out of the office; any new activity brings it back. */
 export const IDLE_VANISH_SEC = 10 * 60;
+
+// ── Chat working indicator ──────────────────────────────────────
+/** Spinner frame interval, ms. */
+export const WORKING_FRAME_MS = 120;
+/** How often the working word changes, ms. */
+export const WORKING_WORD_MS = 3000;
+/** Words shown while an agent thinks, in the spirit of Claude Code's own. */
+export const WORKING_WORDS = [
+  'Thinking',
+  'Pondering',
+  'Brewing',
+  'Crafting',
+  'Noodling',
+  'Percolating',
+  'Tinkering',
+  'Conjuring',
+  'Mulling',
+  'Cogitating',
+  'Synthesizing',
+  'Untangling',
+  'Assembling',
+  'Wrangling',
+  'Simmering',
+];

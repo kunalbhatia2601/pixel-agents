@@ -8,7 +8,7 @@ import type {
   UsageTotals,
 } from '../../../core/src/messages.js';
 import { effectiveMode, PERMISSION_MODES, READ_ONLY_MODES } from '../permissionModes.js';
-import { STAGE_CLASS, stageLabel } from '../taskStatus.js';
+import { chatActivity, STAGE_CLASS, stageLabel } from '../taskStatus.js';
 import { transport } from '../transport/index.js';
 import { formatCost } from '../usageFormat.js';
 import { ChatMarkdown } from './ChatMarkdown.js';
@@ -18,6 +18,7 @@ import { ReviewHistory } from './ReviewHistory.js';
 import { Button } from './ui/Button.js';
 import { Modal } from './ui/Modal.js';
 import { UsageSummary } from './UsageSummary.js';
+import { WorkingIndicator } from './WorkingIndicator.js';
 
 /** Pixels from the bottom within which new entries keep the view pinned to the latest. */
 const STICK_TO_BOTTOM_PX = 80;
@@ -33,6 +34,8 @@ interface AgentChatModalProps {
   title: string;
   /** Start a new task branching from this chat's task. */
   onBranch: (task: Task) => void;
+  /** Whether an office character is working right now (for chats not tied to a running task). */
+  isAgentActive: (agentId: number) => boolean;
   onClose: () => void;
   /** Approvals and questions this agent is waiting on. */
   requests: PermissionAsked[];
@@ -85,12 +88,20 @@ export function AgentChatModal({
   target,
   title,
   onBranch,
+  isAgentActive,
   onClose,
   requests,
   tasks,
 }: AgentChatModalProps) {
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [controllable, setControllable] = useState(false);
+  const [isReviewer, setIsReviewer] = useState(false);
+  // Re-render every second so the office's live activity is noticed while the chat is open.
+  const [, setPulse] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setPulse((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
   const [taskId, setTaskId] = useState<string | undefined>(target?.taskId);
   const [transcriptUsage, setTranscriptUsage] = useState<UsageTotals | undefined>();
   const task = taskId ? tasks.find((t) => t.id === taskId) : undefined;
@@ -116,6 +127,7 @@ export function AgentChatModal({
           : msg.id === agentId;
       if (!mine) return;
       setControllable(msg.controllable);
+      setIsReviewer(!!msg.reviewer);
       setTaskId(msg.taskId);
       if (msg.usage) setTranscriptUsage(msg.usage);
       setEntries((prev) => (msg.reset ? msg.entries : [...prev, ...msg.entries]));
@@ -127,6 +139,17 @@ export function AgentChatModal({
     };
   }, [agentId, targetTaskId]);
   const address = taskId !== undefined ? { taskId } : { id: agentId };
+
+  const lastEntry = entries[entries.length - 1];
+  const runningTool = lastEntry?.kind === 'tool' ? lastEntry : undefined;
+  const activity = chatActivity({
+    task,
+    isReviewer,
+    agentActive: agentId !== undefined && isAgentActive(agentId),
+    runningToolName: runningTool?.toolName,
+  });
+  // A running command counts from when it started; otherwise the indicator counts from when it appeared.
+  const workingSince = runningTool?.ts ? Date.parse(runningTool.ts) || undefined : undefined;
 
   useEffect(() => {
     const el = listRef.current;
@@ -234,6 +257,9 @@ export function AgentChatModal({
           {entries.map((entry, i) => (
             <Entry key={i} entry={entry} />
           ))}
+          {activity.working && requests.length === 0 && (
+            <WorkingIndicator label={activity.label} since={workingSince} />
+          )}
         </div>
         <PendingRequests requests={requests} />
         {controllable ? (

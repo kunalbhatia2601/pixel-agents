@@ -487,6 +487,7 @@ function handleTaskMessage(
           type: 'agentChat',
           id: target.agentId,
           taskId: target.task?.id,
+          reviewer: target.reviewer || undefined,
           controllable: !!target.task && !target.reviewer && tasks.canMessage(target.task),
         });
         if (!target.file) {

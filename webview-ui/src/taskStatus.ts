@@ -63,3 +63,35 @@ export function taskUsage(task: Task): UsageTotals | undefined {
   if (!task.usage) return task.reviewUsage;
   return task.reviewUsage ? addUsageTotals(task.usage, task.reviewUsage) : task.usage;
 }
+
+/**
+ * Whether a chat's agent is working right now, and what to say about it. A dev chat follows its task,
+ * a QA chat follows the review, and any other agent follows the office's live activity.
+ */
+export function chatActivity(ctx: {
+  task?: Task;
+  isReviewer: boolean;
+  agentActive: boolean;
+  runningToolName?: string;
+}): { working: boolean; label?: string } {
+  const { task, isReviewer } = ctx;
+  if (isReviewer) {
+    const working = task?.stage === 'reviewing';
+    return {
+      working,
+      label: working && ctx.runningToolName ? `Running ${ctx.runningToolName}` : undefined,
+    };
+  }
+  if (task) {
+    if (task.status === 'queued')
+      return { working: true, label: 'Waiting for a free seat in the Dev Team' };
+    if (task.status === 'preparing') return { working: true, label: 'Setting up the workspace' };
+    if (task.status !== 'running') return { working: false };
+  } else if (!ctx.agentActive) {
+    return { working: false };
+  }
+  return {
+    working: true,
+    label: ctx.runningToolName ? `Running ${ctx.runningToolName}` : undefined,
+  };
+}

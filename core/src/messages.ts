@@ -497,6 +497,7 @@ export interface AgentChat {
   reset: boolean;
   controllable: boolean;
   taskId?: string;
+  reviewer?: boolean;
   usage?: UsageTotals;
 }
 

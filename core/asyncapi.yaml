@@ -1388,6 +1388,9 @@ components:
         taskId:
           type: string
           description: The task this agent ran, if any; its usage and changes are authoritative.
+        reviewer:
+          type: boolean
+          description: The chat is the task's QA reviewer, not its dev agent.
         usage:
           $ref: '#/components/schemas/UsageTotals'
 

@@ -625,6 +625,7 @@ function App() {
               : ''
         }
         onClose={() => setChatTarget(null)}
+        isAgentActive={(id) => getOfficeState().characters.get(id)?.isActive ?? false}
         onBranch={(task) => {
           setChatTarget(null);
           openBoard({ tab: 'live', form: { fromTask: task } });
