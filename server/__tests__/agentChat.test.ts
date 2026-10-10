@@ -50,12 +50,21 @@ describe('chatEntriesFromLine', () => {
     expect(chatEntriesFromLine('{not json')).toEqual([]);
   });
 
-  it('clips very long text', () => {
-    const [entry] = chatEntriesFromLine(
-      line({ type: 'user', message: { content: 'a'.repeat(5000) } }),
+  it('keeps long replies whole and clips only tool output', () => {
+    const [reply] = chatEntriesFromLine(
+      line({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'a'.repeat(10000) }] },
+      }),
     );
-    expect(entry.text.length).toBeLessThan(4100);
-    expect(entry.text).toContain('1000 more chars');
+    expect(reply.text).toHaveLength(10000);
+    const [result] = chatEntriesFromLine(
+      line({
+        type: 'user',
+        message: { content: [{ type: 'tool_result', content: 'b'.repeat(5000) }] },
+      }),
+    );
+    expect(result.text).toContain('3500 more chars');
   });
 });
 

@@ -4,6 +4,7 @@ import type { ChatEntry, PermissionAsked, Task, UsageTotals } from '../../../cor
 import { STAGE_CLASS, stageLabel } from '../taskStatus.js';
 import { transport } from '../transport/index.js';
 import { formatCost } from '../usageFormat.js';
+import { ChatMarkdown } from './ChatMarkdown.js';
 import { PendingRequests } from './PendingRequests.js';
 import { inputClass } from './ProjectRoomModal.js';
 import { ReviewHistory } from './ReviewHistory.js';
@@ -36,21 +37,23 @@ function Entry({ entry }: { entry: ChatEntry }) {
   switch (entry.kind) {
     case 'user':
       return (
-        <div className="self-end max-w-[85%] bg-active-bg border-2 border-accent p-6 whitespace-pre-wrap break-words">
-          {entry.text}
+        <div className="self-end max-w-[85%] bg-active-bg border-2 border-accent p-6">
+          <ChatMarkdown text={entry.text} />
         </div>
       );
     case 'assistant':
       return (
-        <div className="self-start max-w-[85%] bg-btn-bg p-6 whitespace-pre-wrap break-words">
-          {entry.text}
+        <div className="self-start max-w-[92%] bg-btn-bg p-8">
+          <ChatMarkdown text={entry.text} />
         </div>
       );
     case 'thinking':
       return (
         <details className="self-start max-w-[85%] text-text-muted text-sm">
           <summary className="cursor-pointer">Thinking</summary>
-          <div className="whitespace-pre-wrap break-words p-4">{entry.text}</div>
+          <div className="p-4 opacity-80">
+            <ChatMarkdown text={entry.text} />
+          </div>
         </details>
       );
     case 'tool':

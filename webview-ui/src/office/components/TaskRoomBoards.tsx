@@ -119,6 +119,7 @@ export function TaskRoomBoards({
                         <span className={STATUS_CLASS[t.status]}>{statusLabel(t)}</span>
                       )}{' '}
                       · {projectName(t.projectId)}
+                      {t.readOnly ? ' · no branch' : ''}
                     </span>
                   </button>
                 );

@@ -10,10 +10,9 @@ export const STATUS_CLASS: Record<Task['status'], string> = {
   stopped: 'text-warning',
 };
 
-/** "waiting" for a finished turn whose session is still open for your next message. */
+/** The dev agent's state in words. A finished turn reads "done" whether or not its session is still open. */
 export function statusLabel(task: Task): string {
-  if (task.status === 'queued') return 'queued for a seat';
-  return task.status === 'done' && task.sessionOpen ? 'waiting' : task.status;
+  return task.status === 'queued' ? 'queued for a seat' : task.status;
 }
 
 export const STAGE_CLASS: Record<TaskStage, string> = {
@@ -44,13 +43,15 @@ export function stageLabel(task: Task): string {
   }
 }
 
-/** Live = queued, preparing, running, waiting with its session open, or anywhere in the QA loop before a verdict. */
+/**
+ * Live = work is happening or about to: queued for a seat, preparing, running, or in the QA loop
+ * before a verdict. A finished turn is not live, even while its session stays open for follow-ups.
+ */
 export function isLiveTask(task: Task): boolean {
   return (
     task.status === 'queued' ||
     task.status === 'preparing' ||
     task.status === 'running' ||
-    !!task.sessionOpen ||
     task.stage === 'review_queued' ||
     task.stage === 'reviewing' ||
     task.stage === 'changes_requested'

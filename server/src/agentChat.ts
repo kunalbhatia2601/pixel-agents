@@ -3,7 +3,11 @@ import * as fs from 'fs';
 import type { ChatEntry, UsageTotals } from '../../core/src/messages.js';
 import { TranscriptUsage } from './usage.js';
 
-const TEXT_MAX_CHARS = 4000;
+/** Replies and prompts are what the owner reads: only a runaway message is cut. */
+const TEXT_MAX_CHARS = 200_000;
+/** Thinking is collapsed by default; long chains are trimmed. */
+const THINKING_MAX_CHARS = 20_000;
+/** Tool calls and output can be huge (file dumps, logs): a preview is enough. */
 const TOOL_MAX_CHARS = 1500;
 /** History sent when a chat opens; long sessions would otherwise ship megabytes. */
 const HISTORY_MAX_ENTRIES = 300;
@@ -66,7 +70,7 @@ function chatEntriesFromRecord(record: Record<string, unknown>): ChatEntry[] {
         typeof block.thinking === 'string' &&
         block.thinking
       ) {
-        entries.push({ kind: 'thinking', text: clip(block.thinking, TEXT_MAX_CHARS), ts });
+        entries.push({ kind: 'thinking', text: clip(block.thinking, THINKING_MAX_CHARS), ts });
       } else if (block.type === 'tool_use') {
         const input = block.input as Record<string, unknown> | undefined;
         const text =
