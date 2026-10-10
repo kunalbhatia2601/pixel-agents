@@ -7,7 +7,13 @@ import {
   TASK_BOARD_INSET_TILES,
   TILE_SIZE,
 } from '../../constants.js';
-import { isLiveTask, STATUS_CLASS, statusLabel } from '../../taskStatus.js';
+import {
+  isLiveTask,
+  STAGE_CLASS,
+  stageLabel,
+  STATUS_CLASS,
+  statusLabel,
+} from '../../taskStatus.js';
 import type { OfficeState } from '../engine/officeState.js';
 import { areaBounds } from '../layout/projectShelves.js';
 import { overlayProjection } from '../projection.js';
@@ -107,8 +113,12 @@ export function TaskRoomBoards({
                       {t.title}
                     </span>
                     <span className="text-2xs text-text-muted truncate w-full">
-                      <span className={STATUS_CLASS[t.status]}>{statusLabel(t)}</span> ·{' '}
-                      {projectName(t.projectId)}
+                      {t.stage ? (
+                        <span className={STAGE_CLASS[t.stage]}>{stageLabel(t)}</span>
+                      ) : (
+                        <span className={STATUS_CLASS[t.status]}>{statusLabel(t)}</span>
+                      )}{' '}
+                      · {projectName(t.projectId)}
                     </span>
                   </button>
                 );

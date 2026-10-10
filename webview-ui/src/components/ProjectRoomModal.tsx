@@ -121,6 +121,7 @@ interface ProjectRoomModalProps {
   onClose: () => void;
   projects: Project[];
   agentDefaults: AgentSettings;
+  reviewerDefaults: AgentSettings;
   /** For per-project usage and code totals. */
   tasks: Task[];
   /** Open straight into this project's form (NEW_PROJECT for a new one); null shows the list. */
@@ -132,11 +133,15 @@ export function ProjectRoomModal({
   onClose,
   projects,
   agentDefaults,
+  reviewerDefaults,
   tasks,
   initialEdit,
 }: ProjectRoomModalProps) {
   const [editing, setEditing] = useState<Project | null>(initialEdit);
-  const [editingDefaults, setEditingDefaults] = useState<AgentSettings | null>(null);
+  const [editingDefaults, setEditingDefaults] = useState<{
+    defaults: AgentSettings;
+    reviewer: AgentSettings;
+  } | null>(null);
 
   const setRepo = (i: number, repo: ProjectRepo | null) =>
     setEditing((p) =>
@@ -203,6 +208,22 @@ export function ProjectRoomModal({
                 + Add repo
               </Button>
             </div>
+            <label className="flex flex-col gap-2">
+              QA review rounds per task (0 = no QA review; empty = 3)
+              <input
+                className={`${inputClass} w-[120px]`}
+                type="number"
+                min={0}
+                max={10}
+                value={editing.maxReviewRounds ?? ''}
+                onChange={(e) =>
+                  setEditing({
+                    ...editing,
+                    maxReviewRounds: e.target.value === '' ? undefined : Number(e.target.value),
+                  })
+                }
+              />
+            </label>
             <div className="flex flex-col gap-2">
               Agent settings for this project (empty = use the defaults)
               <AgentSettingsFields
@@ -234,7 +255,7 @@ export function ProjectRoomModal({
                       size="sm"
                       variant="accent"
                       onClick={() => {
-                        transport.send({ type: 'saveAgentDefaults', defaults: editingDefaults });
+                        transport.send({ type: 'saveAgentDefaults', ...editingDefaults });
                         setEditingDefaults(null);
                       }}
                     >
@@ -242,21 +263,36 @@ export function ProjectRoomModal({
                     </Button>
                   </div>
                 ) : (
-                  <Button size="sm" onClick={() => setEditingDefaults(agentDefaults)}>
+                  <Button
+                    size="sm"
+                    onClick={() =>
+                      setEditingDefaults({ defaults: agentDefaults, reviewer: reviewerDefaults })
+                    }
+                  >
                     Edit
                   </Button>
                 )}
               </div>
               {editingDefaults ? (
-                <AgentSettingsFields
-                  value={editingDefaults}
-                  onChange={setEditingDefaults}
-                  inheritLabel="Claude Code default"
-                />
+                <>
+                  <span className="text-sm">Dev agents</span>
+                  <AgentSettingsFields
+                    value={editingDefaults.defaults}
+                    onChange={(defaults) => setEditingDefaults({ ...editingDefaults, defaults })}
+                    inheritLabel="Claude Code default"
+                  />
+                  <span className="text-sm">QA reviewer (overrides the task&apos;s settings)</span>
+                  <AgentSettingsFields
+                    value={editingDefaults.reviewer}
+                    onChange={(reviewer) => setEditingDefaults({ ...editingDefaults, reviewer })}
+                    inheritLabel="same as the task"
+                  />
+                </>
               ) : (
                 <span className="text-sm text-text-muted">
-                  {describeAgentSettings(agentDefaults) || 'Claude Code defaults'} — projects and
-                  tasks can override.
+                  Devs: {describeAgentSettings(agentDefaults) || 'Claude Code defaults'} · QA:{' '}
+                  {describeAgentSettings(reviewerDefaults) || 'same as the task'} — projects and
+                  tasks can override the dev settings.
                 </span>
               )}
             </div>

@@ -1,7 +1,14 @@
 import { useState } from 'react';
 
 import type { PermissionAsked, Project, Task } from '../../../core/src/messages.js';
-import { isLiveTask, STATUS_CLASS, statusLabel } from '../taskStatus.js';
+import {
+  isLiveTask,
+  STAGE_CLASS,
+  stageLabel,
+  STATUS_CLASS,
+  statusLabel,
+  taskUsage,
+} from '../taskStatus.js';
 import { transport } from '../transport/index.js';
 import { describeAgentSettings } from './describeAgentSettings.js';
 import { NewTaskForm } from './NewTaskForm.js';
@@ -55,6 +62,7 @@ function TaskRow({
         </button>
         <div className="flex items-center gap-4 shrink-0">
           {waiting > 0 && <span className="text-status-permission">needs you ({waiting})</span>}
+          {task.stage && <span className={STAGE_CLASS[task.stage]}>{stageLabel(task)}</span>}
           <span className={STATUS_CLASS[task.status]}>{statusLabel(task)}</span>
         </div>
       </div>
@@ -63,7 +71,7 @@ function TaskRow({
         {task.agent && ` · ${describeAgentSettings(task.agent)}`}
       </span>
       {parent && <span className="text-xs text-text-muted">Branched from “{parent.title}”</span>}
-      <UsageSummary usage={task.usage} changes={task.changes} compact />
+      <UsageSummary usage={taskUsage(task)} changes={task.changes} compact />
       {task.error && <span className="text-sm text-status-error">{task.error}</span>}
       <div className="flex gap-4 justify-end">
         <Button size="sm" onClick={onOpen}>

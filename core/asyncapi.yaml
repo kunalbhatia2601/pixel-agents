@@ -1267,6 +1267,9 @@ components:
         dir:
           type: string
           description: Server-filled. The project's folder holding docs/ and memory/.
+        maxReviewRounds:
+          type: number
+          description: Automatic QA rounds per task before escalating to the owner (default 3; 0 = no review).
         agent:
           $ref: '#/components/schemas/AgentSettings'
 
@@ -1346,6 +1349,8 @@ components:
         type:
           const: agentDefaultsLoaded
         defaults:
+          $ref: '#/components/schemas/AgentSettings'
+        reviewer:
           $ref: '#/components/schemas/AgentSettings'
 
     AgentChat:
@@ -1449,6 +1454,8 @@ components:
         type:
           const: saveAgentDefaults
         defaults:
+          $ref: '#/components/schemas/AgentSettings'
+        reviewer:
           $ref: '#/components/schemas/AgentSettings'
 
     WatchAgentChat:
@@ -1556,8 +1563,64 @@ components:
       enum: [auto, branch, none]
 
     TaskStatus:
+      description: The dev agent's lifecycle. queued = waiting for one of the Dev Team's seats.
       type: string
-      enum: [preparing, running, done, failed, stopped]
+      enum: [queued, preparing, running, done, failed, stopped]
+
+    TaskStage:
+      description: >-
+        Where the task is in the review loop (absent = no review yet). review_queued = on the QA pile,
+        reviewing = a QA agent is on it, changes_requested = the dev is fixing review comments,
+        approved = ready for the owner, escalated = needs the owner (round limit, no progress, or review failure).
+      type: string
+      enum: [review_queued, reviewing, changes_requested, approved, escalated]
+
+    ReviewSeverity:
+      type: string
+      enum: [blocker, major, minor, nit]
+
+    ReviewComment:
+      type: object
+      additionalProperties: false
+      required: [severity, title, detail]
+      properties:
+        severity:
+          $ref: '#/components/schemas/ReviewSeverity'
+        title:
+          type: string
+        detail:
+          type: string
+        file:
+          type: string
+        line:
+          type: number
+        suggestion:
+          type: string
+
+    ReviewRecord:
+      description: One QA round. error is set when the review itself failed.
+      type: object
+      additionalProperties: false
+      required: [round, at]
+      properties:
+        round:
+          type: number
+        at:
+          type: number
+        approved:
+          type: boolean
+        summary:
+          type: string
+        comments:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReviewComment'
+        testsRun:
+          type: array
+          items:
+            type: string
+        error:
+          type: string
 
     ProjectRepo:
       description: One repo of a project; each task gets a worktree of it in a folder named `name`.
@@ -1606,6 +1669,25 @@ components:
         sessionOpen:
           type: boolean
           description: The agent process is alive and accepts follow-up messages.
+        prompt:
+          type: string
+          description: The original instructions (the reviewer checks the work against them).
+        stage:
+          $ref: '#/components/schemas/TaskStage'
+        maxReviewRounds:
+          type: number
+          description: Automatic review rounds before escalating to the owner; 0 = no review.
+        reviews:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReviewRecord'
+        reviewUsage:
+          $ref: '#/components/schemas/UsageTotals'
+        reviewSessionIds:
+          type: array
+          description: Claude sessions of this task's QA agents (their chats are read-only).
+          items:
+            type: string
         sessionId:
           type: string
           description: Claude session id of the task's agent; links office agents to tasks.

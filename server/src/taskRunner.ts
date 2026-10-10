@@ -16,17 +16,32 @@ import type {
 import { normalizeProjectPath } from '../../core/src/normalizeProjectPath.js';
 import type { AgentRuntime } from './agentRuntime.js';
 import type { AgentStateStore } from './agentStateStore.js';
+import { DEV_TEAM_AREA, ensureAreaMapping, QA_AREA } from './areaMappings.js';
 import { SERVER_JSON_DIR } from './constants.js';
-import { cleanAgentSettings, getAgentDefaults, getProject, listProjectFiles } from './projects.js';
+import {
+  cleanAgentSettings,
+  getAgentDefaults,
+  getProject,
+  getReviewerDefaults,
+  listProjectFiles,
+} from './projects.js';
 import { CLAUDE_HOOK_EVENTS } from './providers/hook/claude/constants.js';
+import {
+  DEFAULT_MAX_REVIEW_ROUNDS,
+  feedbackMessage,
+  parseVerdict,
+  reviewerBrief,
+  VERDICT_SCHEMA,
+} from './reviewer.js';
 import { needsBranch } from './taskRouter.js';
-import { parseNumstat, summarizeChanges, usageFromModelUsage } from './usage.js';
+import { addUsage, parseNumstat, summarizeChanges, usageFromModelUsage } from './usage.js';
 
 const run = promisify(execFile);
 
-const ROOT = path.join(os.homedir(), SERVER_JSON_DIR);
-const TASKS_FILE = path.join(ROOT, 'tasks.json');
-const WORKTREES_ROOT = path.join(ROOT, 'worktrees');
+/** ~/.pixel-agents and its task files, resolved on use (tests swap the home directory). */
+const root = () => path.join(os.homedir(), SERVER_JSON_DIR);
+const tasksFile = () => path.join(root(), 'tasks.json');
+const worktreesRoot = () => path.join(root(), 'worktrees');
 const SETUP_TIMEOUT_MS = 10 * 60_000;
 const DETAIL_MAX_CHARS = 2000;
 
@@ -59,6 +74,46 @@ export interface StartOptions {
 }
 
 const FETCH_TIMEOUT_MS = 60_000;
+
+/** Dev turns that may run at once: one per seat in the Dev Team room. */
+export const DEV_SLOTS = 6;
+/** QA reviews that may run at once. */
+export const QA_SLOTS = 2;
+const COMMIT_NUDGE =
+  'You left uncommitted changes in the worktree. Commit them on this branch with a clear message (or revert them if they are not meant to stay), then reply with one line. QA reviews committed work only.';
+
+/** Work waiting for a free Dev Team seat; persisted so a restart picks it back up. */
+type PendingWork =
+  | {
+      kind: 'start';
+      baseBranches: Record<string, string>;
+      fromTaskId?: string;
+      carryContext?: boolean;
+      branchMode: BranchMode;
+    }
+  | { kind: 'message'; text: string };
+
+/** A task plus the loop's bookkeeping, persisted in tasks.json alongside the public fields. */
+type StoredTask = Task & {
+  pending?: PendingWork;
+  /** Reviews since the owner last messaged the dev; capped by maxReviewRounds. */
+  autoRounds?: number;
+  /** The dev's latest reply, given to the reviewer. */
+  lastSummary?: string;
+  /** HEAD of each repo at the last review: no new commits means nothing to review. */
+  reviewedHeads?: Record<string, string>;
+  commitNudged?: boolean;
+};
+
+/** "Bash(npm test)" + "Bash(npm test:*)" for every repo's test and setup command: run without asking. */
+function projectCommandRules(project: Project): string[] {
+  return project.repos
+    .flatMap((r) => [r.testCommand, r.setupCommand])
+    .filter((c): c is string => !!c)
+    .flatMap((c) => [`Bash(${c})`, `Bash(${c}:*)`]);
+}
+
+const qaLabel = (project: Project) => `${project.name} QA`;
 /** Editing tools a read-only task never gets; Bash still asks before anything that writes. */
 const READ_ONLY_DISALLOWED_TOOLS = ['Edit', 'Write', 'NotebookEdit'];
 
@@ -153,7 +208,12 @@ function slugify(text: string): string {
 
 /** Starts SDK agents on project tasks and feeds their hook events into the office. */
 export class TaskRunner {
-  private tasks: Task[] = [];
+  private tasks: StoredTask[] = [];
+  /** Task ids waiting for a Dev Team seat / a QA slot, oldest first. */
+  private devQueue: string[] = [];
+  private reviewQueue: string[] = [];
+  private reviewAborts = new Map<string, AbortController>();
+  private pumping = false;
   private aborts = new Map<string, AbortController>();
   private permissions = new Map<string, PendingPermission>();
   private sessions = new Map<string, Session>();
@@ -165,7 +225,7 @@ export class TaskRunner {
     private runtime: AgentRuntime,
   ) {
     try {
-      this.tasks = JSON.parse(fs.readFileSync(TASKS_FILE, 'utf-8')) as Task[];
+      this.tasks = JSON.parse(fs.readFileSync(tasksFile(), 'utf-8')) as Task[];
     } catch {
       this.tasks = [];
     }
@@ -175,6 +235,13 @@ export class TaskRunner {
         task.status = 'stopped';
         task.error = 'Server restarted while the task was running';
       }
+      // Waiting work survives: queued dev work goes back in line, and so does an interrupted review.
+      if (task.status === 'queued') {
+        if (task.pending) this.devQueue.push(task.id);
+        else task.status = 'stopped';
+      }
+      if (task.stage === 'reviewing') task.stage = 'review_queued';
+      if (task.stage === 'review_queued') this.reviewQueue.push(task.id);
       // Sessions never survive a restart.
       task.sessionOpen = false;
       const project = getProject(task.projectId);
@@ -223,13 +290,15 @@ export class TaskRunner {
     }
     const baseBranches = cleanBaseBranches(project, opts.baseBranches);
     const id = crypto.randomBytes(4).toString('hex');
-    const task: Task = {
+    const task: StoredTask = {
       id,
       projectId,
       title: title.trim(),
-      status: 'preparing',
+      prompt: prompt.trim(),
+      status: 'queued',
+      maxReviewRounds: project.maxReviewRounds ?? DEFAULT_MAX_REVIEW_ROUNDS,
       branch: `agent/${slugify(title)}-${id}`,
-      worktree: path.join(WORKTREES_ROOT, slugify(project.name), id),
+      worktree: path.join(worktreesRoot(), slugify(project.name), id),
       createdAt: Date.now(),
       // Later layers win: global defaults → project → this task.
       agent: cleanAgentSettings({
@@ -238,16 +307,74 @@ export class TaskRunner {
         ...cleanAgentSettings(opts.agent),
       }),
       parentTaskId: parent?.id,
+      pending: {
+        kind: 'start',
+        baseBranches,
+        fromTaskId: parent?.id,
+        carryContext: opts.carryContext,
+        branchMode: parent ? 'branch' : (opts.branchMode ?? 'auto'),
+      },
     };
     this.tasks.unshift(task);
     this.rememberWorktree(task.worktree!, project.name);
+    this.devQueue.push(task.id);
     this.changed();
-    void this.execute(task, project, prompt.trim(), false, {
-      baseBranches,
-      forkFrom: opts.carryContext ? parent : undefined,
-      branchMode: parent ? 'branch' : (opts.branchMode ?? 'auto'),
-    });
     return task;
+  }
+
+  // ── Scheduler: Dev Team seats and QA slots ──
+
+  private devBusy(): number {
+    return this.tasks.filter((t) => t.status === 'preparing' || t.status === 'running').length;
+  }
+
+  private qaBusy(): number {
+    return this.tasks.filter((t) => t.stage === 'reviewing').length;
+  }
+
+  /** Starts queued dev work and reviews while seats are free. Every state change ends here (via changed). */
+  private pump(): void {
+    if (this.pumping) return;
+    this.pumping = true;
+    try {
+      while (this.devBusy() < DEV_SLOTS && this.devQueue.length) {
+        const task = this.taskById(this.devQueue.shift()!);
+        if (task?.status === 'queued' && task.pending) this.dispatch(task);
+      }
+      while (this.qaBusy() < QA_SLOTS && this.reviewQueue.length) {
+        const task = this.taskById(this.reviewQueue.shift()!);
+        if (task?.stage === 'review_queued') void this.review(task);
+      }
+    } finally {
+      this.pumping = false;
+    }
+  }
+
+  /** Runs a queued task's pending work now (a seat is free). Sets a busy status before returning. */
+  private dispatch(task: StoredTask): void {
+    const work = task.pending!;
+    task.pending = undefined;
+    const project = getProject(task.projectId);
+    if (!project) {
+      task.status = 'failed';
+      task.error = 'The project no longer exists';
+      return;
+    }
+    ensureAreaMapping(project.name, DEV_TEAM_AREA, (m) => this.store.broadcast(m));
+    task.status = work.kind === 'start' ? 'preparing' : 'running';
+    task.error = undefined;
+    if (work.kind === 'start') {
+      const parent = work.fromTaskId ? this.taskById(work.fromTaskId) : undefined;
+      void this.execute(task, project, task.prompt ?? '', false, {
+        baseBranches: work.baseBranches,
+        forkFrom: work.carryContext ? parent : undefined,
+        branchMode: work.branchMode,
+      });
+      return;
+    }
+    const session = this.sessions.get(task.id);
+    if (session) session.push(work.text);
+    else void this.execute(task, project, work.text, true);
   }
 
   /** Fetches every remote of each repo, then lists local + remote branches, newest commit first. */
@@ -289,16 +416,31 @@ export class TaskRunner {
       : undefined;
   }
 
-  taskById(taskId: string): Task | undefined {
+  taskById(taskId: string): StoredTask | undefined {
     return this.tasks.find((t) => t.id === taskId);
+  }
+
+  /** The task a QA agent's session reviewed (its chat is read-only). */
+  taskForReviewSession(sessionId: string): Task | undefined {
+    return this.tasks.find((t) => t.reviewSessionIds?.includes(sessionId));
   }
 
   /** Running: abort now. Idle with an open session: end it gracefully. */
   stop(taskId: string): void {
-    const task = this.tasks.find((t) => t.id === taskId);
+    const task = this.taskById(taskId);
+    if (!task) return;
+    if (task.status === 'queued') {
+      task.pending = undefined;
+      task.status = task.sessionId ? 'done' : 'stopped';
+    }
+    if (task.stage === 'review_queued' || task.stage === 'reviewing') {
+      this.reviewAborts.get(taskId)?.abort();
+      task.stage = 'escalated';
+    }
     const session = this.sessions.get(taskId);
-    if (session && task?.status === 'done') session.end();
+    if (session && task.status === 'done') session.end();
     else this.aborts.get(taskId)?.abort();
+    this.changed();
   }
 
   /** Any task (finished or not) whose agent ran as `sessionId`: its usage and changes. */
@@ -318,24 +460,31 @@ export class TaskRunner {
    * A follow-up always continues the task: same worktree, same branch, same conversation.
    * A live session takes it directly; an ended one (End session, server restart) is resumed.
    */
-  sendMessage(taskId: string, text: string): void {
-    const task = this.tasks.find((t) => t.id === taskId);
+  sendMessage(taskId: string, text: string, fromOwner = true): void {
+    const task = this.taskById(taskId);
     if (!task || !text.trim()) throw new Error('This agent is not accepting messages');
+    // The owner stepping in restarts the automatic review count.
+    if (fromOwner) task.autoRounds = 0;
     const session = this.sessions.get(taskId);
-    if (session) {
-      session.push(text.trim());
+    if (session && task.status === 'running') {
+      session.push(text.trim()); // already holds a seat; the session queues it after the current turn
+    } else if (task.status === 'queued' && task.pending) {
+      task.pending =
+        task.pending.kind === 'message'
+          ? { kind: 'message', text: `${task.pending.text}\n\n${text.trim()}` }
+          : task.pending; // not started yet: the first turn will see the conversation anyway
     } else {
       // A resume already starting has no session yet; a second one would run the agent twice.
-      if (this.aborts.has(taskId))
+      if (!session && this.aborts.has(taskId)) {
         throw new Error('The agent is still starting; try again shortly');
-      const project = getProject(task.projectId);
-      if (!project || !this.canMessage(task)) {
+      }
+      if (!this.canMessage(task)) {
         throw new Error("This task can't continue: its worktree no longer exists");
       }
-      void this.execute(task, project, text.trim(), true);
+      task.status = 'queued';
+      task.pending = { kind: 'message', text: text.trim() };
+      this.devQueue.push(task.id);
     }
-    task.status = 'running';
-    task.error = undefined;
     this.changed();
   }
 
@@ -440,6 +589,7 @@ export class TaskRunner {
             ...(task.readOnly ? project.repos.slice(1).map((r) => r.path) : []),
           ],
           permissionMode: task.readOnly ? 'default' : 'acceptEdits',
+          allowedTools: task.readOnly ? [] : projectCommandRules(project),
           canUseTool: (toolName, input, { signal }) =>
             this.askPermission(task, sessionId, toolName, input, signal).then((d) =>
               d.allow
@@ -481,7 +631,9 @@ export class TaskRunner {
         await this.refreshChanges(task, project);
         if (message.subtype === 'success') {
           task.status = 'done';
+          (task as StoredTask).lastSummary = message.result;
           this.writeMemory(task, project, session.lastPrompt, message.result);
+          await this.afterDevTurn(task, project);
         } else if (session.interrupted) {
           task.status = 'done'; // the user stopped this turn; the session waits for them
         } else {
@@ -522,6 +674,180 @@ export class TaskRunner {
     fs.copyFileSync(source, dest);
     const { atime, mtime } = fs.statSync(source);
     fs.utimesSync(dest, atime, mtime);
+  }
+
+  // ── Review loop ──
+
+  private async repoHeads(task: Task, project: Project, worktreeOf = repoWorktree) {
+    const heads: Record<string, string> = {};
+    for (const repo of project.repos) {
+      const dir = worktreeOf(task, project, repo);
+      heads[repo.name] = (await run('git', ['-C', dir, 'rev-parse', 'HEAD'])).stdout.trim();
+    }
+    return heads;
+  }
+
+  /** After a successful dev turn: nudge an uncommitted tree once, else put new commits on the QA pile. */
+  private async afterDevTurn(task: StoredTask, project: Project): Promise<void> {
+    if (task.readOnly || !task.maxReviewRounds) return;
+    try {
+      let dirty = false;
+      for (const repo of project.repos) {
+        const { stdout } = await run('git', [
+          '-C',
+          repoWorktree(task, project, repo),
+          'status',
+          '--porcelain',
+        ]);
+        if (stdout.trim()) dirty = true;
+      }
+      if (dirty && !task.commitNudged) {
+        task.commitNudged = true;
+        this.sendMessage(task.id, COMMIT_NUDGE, false);
+        return;
+      }
+      const heads = await this.repoHeads(task, project);
+      const unchanged = (since?: Record<string, string>) =>
+        !!since && project.repos.every((r) => since[r.name] === heads[r.name]);
+      if (unchanged(task.baseCommits) || unchanged(task.reviewedHeads)) {
+        // Nothing new to review. Feedback that produced no commits is stuck: hand it to the owner.
+        if (task.stage === 'changes_requested') task.stage = 'escalated';
+        return;
+      }
+      task.commitNudged = false;
+      task.stage = 'review_queued';
+      this.reviewQueue.push(task.id);
+    } catch (err) {
+      console.warn(`[Pixel Agents] Task ${task.id}: could not queue a review`, err);
+    }
+  }
+
+  /** The reviewer's own detached checkout of the task branch, next to the dev's worktree. */
+  private reviewWorktree = (task: Task, project: Project, repo: ProjectRepo): string =>
+    project.repos.length > 1 ? path.join(`${task.worktree}-qa`, repo.name) : `${task.worktree}-qa`;
+
+  private async prepareReviewWorktree(task: Task, project: Project): Promise<string> {
+    for (const repo of project.repos) {
+      const dest = this.reviewWorktree(task, project, repo);
+      if (fs.existsSync(dest)) {
+        // Fresh each round: exactly the branch's latest commit, last round's scratch tests gone.
+        await run('git', ['-C', dest, 'reset', '--hard', task.branch!]);
+        await run('git', ['-C', dest, 'clean', '-fd']);
+      } else {
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        await run('git', ['-C', repo.path, 'worktree', 'add', '--detach', dest, task.branch!]);
+        if (repo.setupCommand) {
+          await run('sh', ['-c', repo.setupCommand], { cwd: dest, timeout: SETUP_TIMEOUT_MS });
+        }
+      }
+    }
+    return `${task.worktree}-qa`;
+  }
+
+  /** One QA round: a separate agent reviews the branch and returns a structured verdict. */
+  private async review(task: StoredTask): Promise<void> {
+    const project = getProject(task.projectId);
+    const round = (task.reviews?.length ?? 0) + 1;
+    task.stage = 'reviewing';
+    this.changed();
+    const abort = new AbortController();
+    this.reviewAborts.set(task.id, abort);
+    try {
+      if (!project) throw new Error('The project no longer exists');
+      const heads = await this.repoHeads(task, project);
+      const reviewDir = await this.prepareReviewWorktree(task, project);
+      this.rememberWorktree(reviewDir, qaLabel(project));
+      ensureAreaMapping(qaLabel(project), QA_AREA, (m) => this.store.broadcast(m));
+      this.runtime.startProjectScan(transcriptDir(reviewDir));
+
+      const sessionId = crypto.randomUUID();
+      task.reviewSessionIds = [...(task.reviewSessionIds ?? []), sessionId];
+      const settings = cleanAgentSettings({ ...task.agent, ...getReviewerDefaults() }) ?? {};
+      const brief = reviewerBrief(task, project, {
+        reviewDir,
+        repoDirs: project.repos.map((r) => ({
+          name: r.name,
+          dir: this.reviewWorktree(task, project, r),
+          base: task.baseCommits?.[r.name] ?? r.defaultBranch,
+          testCommand: r.testCommand,
+        })),
+        devSummary: task.lastSummary,
+        docsDir: path.join(project.dir!, 'docs'),
+        memoryDir: path.join(project.dir!, 'memory'),
+        round,
+      });
+      const { query } = await import('@anthropic-ai/claude-agent-sdk');
+      const forward = async (input: unknown) => {
+        this.runtime.handleHookEvent('claude', input as Record<string, unknown>);
+        return {};
+      };
+      const stream = query({
+        prompt: `Review the task "${task.title}" (round ${round}) and return your verdict.`,
+        options: {
+          cwd: reviewDir,
+          sessionId,
+          abortController: abort,
+          model: settings.model,
+          effort: settings.effort,
+          thinking: settings.thinking ? { type: settings.thinking } : undefined,
+          settingSources: ['project', 'local'],
+          systemPrompt: { type: 'preset', preset: 'claude_code', append: brief },
+          additionalDirectories: [project.dir!],
+          // Its own throwaway checkout: it may write scratch tests; the project's commands run unasked.
+          permissionMode: 'acceptEdits',
+          allowedTools: projectCommandRules(project),
+          outputFormat: { type: 'json_schema', schema: VERDICT_SCHEMA },
+          canUseTool: (toolName, input, { signal }) =>
+            this.askPermission(task, sessionId, toolName, input, signal).then((d) =>
+              d.allow
+                ? {
+                    behavior: 'allow' as const,
+                    updatedInput: d.answers ? { ...input, answers: d.answers } : input,
+                  }
+                : { behavior: 'deny' as const, message: d.message?.trim() || 'Denied.' },
+            ),
+          hooks: Object.fromEntries(
+            CLAUDE_HOOK_EVENTS.map((event) => [event, [{ hooks: [forward] }]]),
+          ),
+        },
+      });
+      let structured: unknown;
+      for await (const message of stream) {
+        if (message.type !== 'result') continue;
+        task.reviewUsage = addUsage(
+          task.reviewUsage,
+          usageFromModelUsage(message.modelUsage, message.total_cost_usd),
+        );
+        if (message.subtype !== 'success') throw new Error(`Review ended: ${message.subtype}`);
+        structured = message.structured_output;
+      }
+      const verdict = parseVerdict(structured);
+      const record = { round, at: Date.now(), ...verdict };
+      task.reviews = [...(task.reviews ?? []), record];
+      task.reviewedHeads = heads;
+      task.autoRounds = (task.autoRounds ?? 0) + 1;
+      const max = task.maxReviewRounds ?? DEFAULT_MAX_REVIEW_ROUNDS;
+      if (verdict.approved) {
+        task.stage = 'approved';
+      } else if (task.autoRounds >= max) {
+        task.stage = 'escalated';
+      } else {
+        task.stage = 'changes_requested';
+        this.sendMessage(task.id, feedbackMessage(record, max), false);
+      }
+    } catch (err) {
+      const error = abort.signal.aborted
+        ? 'Stopped by the owner'
+        : err instanceof Error
+          ? err.message
+          : String(err);
+      task.reviews = [...(task.reviews ?? []), { round, at: Date.now(), error }];
+      task.stage = 'escalated';
+      console.error(`[Pixel Agents] Task ${task.id} review ${round} failed: ${error}`);
+    } finally {
+      this.reviewAborts.delete(task.id);
+      this.changed();
+    }
   }
 
   /** Diff of every repo against its merge base with the default branch — what a PR would show. */
@@ -625,6 +951,9 @@ export class TaskRunner {
   private briefContext(lines: string[], project: Project): string {
     const docs = listProjectFiles(project, 'docs');
     const memory = listProjectFiles(project, 'memory');
+    if (docs.length || memory.length) {
+      lines.push('', 'Read these with the Read tool (no approval needed), not the shell.');
+    }
     if (docs.length) {
       lines.push(
         '',
@@ -696,15 +1025,16 @@ export class TaskRunner {
   }
 
   private changed(): void {
+    this.pump();
     this.persist();
     this.store.broadcast({ type: 'tasksLoaded', tasks: this.tasks });
   }
 
   private persist(): void {
     try {
-      fs.mkdirSync(ROOT, { recursive: true });
-      fs.writeFileSync(`${TASKS_FILE}.tmp`, JSON.stringify(this.tasks, null, 2), 'utf-8');
-      fs.renameSync(`${TASKS_FILE}.tmp`, TASKS_FILE);
+      fs.mkdirSync(root(), { recursive: true });
+      fs.writeFileSync(`${tasksFile()}.tmp`, JSON.stringify(this.tasks, null, 2), 'utf-8');
+      fs.renameSync(`${tasksFile()}.tmp`, tasksFile());
     } catch (err) {
       console.error('[Pixel Agents] Could not save tasks', err);
     }

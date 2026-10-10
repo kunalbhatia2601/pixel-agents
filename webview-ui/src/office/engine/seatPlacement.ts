@@ -54,3 +54,26 @@ export function closestFreeSeat(
   }
   return best;
 }
+
+/**
+ * Candidate seats in preference order, enforcing room ownership:
+ * - an agent mapped to Areas (a project's devs, its QA) may only sit in those Areas — no fallback,
+ *   so a full room means standing rather than taking another team's desk;
+ * - everyone else first tries unzoned seats, then any seat outside the reserved Areas.
+ */
+export function seatStages(
+  freeSeats: string[],
+  zoneOf: (uid: string) => string | null,
+  mappedAreas: string[] | undefined,
+  reservedAreas: ReadonlySet<string>,
+): string[][] {
+  if (mappedAreas && mappedAreas.length > 0) {
+    const wanted = new Set(mappedAreas);
+    return [freeSeats.filter((uid) => wanted.has(zoneOf(uid) ?? ''))];
+  }
+  const open = freeSeats.filter((uid) => {
+    const zone = zoneOf(uid);
+    return zone === null || !reservedAreas.has(zone);
+  });
+  return [open.filter((uid) => zoneOf(uid) === null), open];
+}

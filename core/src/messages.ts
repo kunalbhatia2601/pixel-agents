@@ -346,6 +346,7 @@ export interface Project {
   name: string;
   repos: ProjectRepo[];
   dir?: string;
+  maxReviewRounds?: number;
   agent?: AgentSettings;
 }
 
@@ -383,6 +384,12 @@ export interface Task {
   createdAt: number;
   agent?: AgentSettings;
   sessionOpen?: boolean;
+  prompt?: string;
+  stage?: TaskStage;
+  maxReviewRounds?: number;
+  reviews?: ReviewRecord[];
+  reviewUsage?: UsageTotals;
+  reviewSessionIds?: string[];
   sessionId?: string;
   parentTaskId?: string;
   readOnly?: boolean;
@@ -392,7 +399,31 @@ export interface Task {
   changedFiles?: ChangedFile[];
 }
 
-export type TaskStatus = 'preparing' | 'running' | 'done' | 'failed' | 'stopped';
+export type TaskStatus = 'queued' | 'preparing' | 'running' | 'done' | 'failed' | 'stopped';
+
+export type TaskStage =
+  'review_queued' | 'reviewing' | 'changes_requested' | 'approved' | 'escalated';
+
+export interface ReviewRecord {
+  round: number;
+  at: number;
+  approved?: boolean;
+  summary?: string;
+  comments?: ReviewComment[];
+  testsRun?: string[];
+  error?: string;
+}
+
+export interface ReviewComment {
+  severity: ReviewSeverity;
+  title: string;
+  detail: string;
+  file?: string;
+  line?: number;
+  suggestion?: string;
+}
+
+export type ReviewSeverity = 'blocker' | 'major' | 'minor' | 'nit';
 
 export interface UsageTotals {
   costUsd?: number;
@@ -451,6 +482,7 @@ export interface ActionError {
 export interface AgentDefaultsLoaded {
   type: 'agentDefaultsLoaded';
   defaults: AgentSettings;
+  reviewer?: AgentSettings;
 }
 
 export interface AgentChat {
@@ -645,6 +677,7 @@ export interface AnswerPermission {
 export interface SaveAgentDefaults {
   type: 'saveAgentDefaults';
   defaults: AgentSettings;
+  reviewer?: AgentSettings;
 }
 
 export interface WatchAgentChat {

@@ -80,3 +80,24 @@ test('falls back to the live tile when the lead has no seat yet', () => {
 test('no anchor yields undefined (non-teammate agents keep default seating)', () => {
   assert.equal(anchorTile(undefined, scenarioSeats()), undefined);
 });
+
+test('room seats belong to their team: devs only in Dev Team, others never in reserved rooms', async () => {
+  const { seatStages } = await import('../src/office/engine/seatPlacement.js');
+  const zones: Record<string, string | null> = {
+    dev1: 'Dev Team',
+    qa1: 'QA / Review',
+    owner1: 'Owner',
+    sofa: 'Lounge',
+    hall: null,
+  };
+  const free = Object.keys(zones);
+  const zoneOf = (uid: string) => zones[uid];
+  const reserved = new Set(['Dev Team', 'QA / Review', 'Owner']);
+
+  assert.deepEqual(seatStages(free, zoneOf, ['Dev Team'], reserved), [['dev1']]);
+  assert.deepEqual(seatStages(free, zoneOf, ['QA / Review'], reserved), [['qa1']]);
+  // A full room means no seat at all, never a desk elsewhere.
+  assert.deepEqual(seatStages(['sofa', 'hall'], zoneOf, ['Dev Team'], reserved), [[]]);
+  // Unmapped agents (the owner's own sessions): unzoned first, then the lounge, never team rooms.
+  assert.deepEqual(seatStages(free, zoneOf, undefined, reserved), [['hall'], ['sofa', 'hall']]);
+});

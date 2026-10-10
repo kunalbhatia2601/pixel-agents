@@ -330,3 +330,17 @@ export const LIVE_TASKS_AREA = 'Live Tasks';
 export const ALL_TASKS_AREA = 'All Tasks';
 /** Inset of a task board inside its room, in tiles (keeps the walls and doorways visible). */
 export const TASK_BOARD_INSET_TILES = 0.5;
+
+// ── Team rooms ──────────────────────────────────────────────────
+/** Rooms whose seats only their mapped agents may take (devs, QA) or nobody's agents (the owner's office). */
+export const RESERVED_AREAS = ['Dev Team', 'QA / Review', 'Owner'];
+
+// ── QA pile ─────────────────────────────────────────────────────
+/** Sheets drawn on the QA room's review pile; more pending reviews only raise the count. */
+export const QA_PILE_MAX_SHEETS = 8;
+/** Vertical step between stacked sheets, in CSS px. */
+export const QA_PILE_SHEET_OFFSET_PX = 3;
+
+// ── Idle vanish ─────────────────────────────────────────────────
+/** An agent idle this long fades out of the office; any new activity brings it back. */
+export const IDLE_VANISH_SEC = 10 * 60;

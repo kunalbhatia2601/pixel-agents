@@ -25,6 +25,7 @@ import { useIntroTour } from './hooks/useIntroTour.js';
 import { NEW_PROJECT, useTasks } from './hooks/useTasks.js';
 import { OfficeCanvas } from './office/components/OfficeCanvas.js';
 import { ProjectShelves } from './office/components/ProjectShelves.js';
+import { QaPile } from './office/components/QaPile.js';
 import { TaskRoomBoards } from './office/components/TaskRoomBoards.js';
 import { ToolOverlay } from './office/components/ToolOverlay.js';
 import { EditorState } from './office/editor/editorState.js';
@@ -478,6 +479,17 @@ function App() {
           )}
 
           {isBrowserRuntime && !editor.isEditMode && (
+            <QaPile
+              officeState={officeState}
+              containerRef={containerRef}
+              zoom={editor.zoom}
+              panRef={editor.panRef}
+              tasks={taskState.tasks}
+              onOpen={() => openBoard({ tab: 'live' })}
+            />
+          )}
+
+          {isBrowserRuntime && !editor.isEditMode && (
             <TaskRoomBoards
               officeState={officeState}
               containerRef={containerRef}
@@ -598,6 +610,7 @@ function App() {
         onClose={() => setProjectsView(null)}
         projects={taskState.projects}
         agentDefaults={taskState.agentDefaults}
+        reviewerDefaults={taskState.reviewerDefaults}
         tasks={taskState.tasks}
       />
 

@@ -217,6 +217,13 @@ export interface Character {
   parentAgentId: number | null;
   /** Active matrix spawn/despawn effect, or null */
   matrixEffect: 'spawn' | 'despawn' | null;
+  /** Seconds idle (not working, no approval pending); long idle sends the character dormant. */
+  idleTime?: number;
+  /** Despawning because it idled out (not because the agent closed): it goes dormant, not away. */
+  vanishing?: boolean;
+  /** Hidden after idling out. Still tracked — its agent, task and chat are untouched — and the
+   *  next activity brings it back (wake). */
+  dormant?: boolean;
   /** Timer counting up from 0 to MATRIX_EFFECT_DURATION */
   matrixEffectTimer: number;
   /** Per-column random seeds (16 values) for staggered rain timing */

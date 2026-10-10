@@ -15,6 +15,7 @@ export interface TasksState {
   tasks: Task[];
   permissions: PermissionAsked[];
   agentDefaults: AgentSettings;
+  reviewerDefaults: AgentSettings;
   error: string | null;
   clearError: () => void;
 }
@@ -25,6 +26,7 @@ export function useTasks(): TasksState {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [permissions, setPermissions] = useState<PermissionAsked[]>([]);
   const [agentDefaults, setAgentDefaults] = useState<AgentSettings>({});
+  const [reviewerDefaults, setReviewerDefaults] = useState<AgentSettings>({});
   const [error, setError] = useState<string | null>(null);
 
   useEffect(
@@ -47,6 +49,7 @@ export function useTasks(): TasksState {
             break;
           case 'agentDefaultsLoaded':
             setAgentDefaults(msg.defaults);
+            setReviewerDefaults(msg.reviewer ?? {});
             break;
           case 'actionError':
             setError(msg.message);
@@ -61,6 +64,7 @@ export function useTasks(): TasksState {
     tasks,
     permissions,
     agentDefaults,
+    reviewerDefaults,
     error,
     clearError: () => setError(null),
   };

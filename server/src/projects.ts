@@ -109,7 +109,13 @@ export function saveProject(input: Project): Project {
   const dir = projectDir(id);
   fs.mkdirSync(path.join(dir, 'docs'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'memory'), { recursive: true });
-  const project: Project = { id, name, repos, agent: cleanAgentSettings(input.agent) };
+  const project: Project = {
+    id,
+    name,
+    repos,
+    agent: cleanAgentSettings(input.agent),
+    maxReviewRounds: cleanReviewRounds(input.maxReviewRounds),
+  };
   writeJson(path.join(dir, 'project.json'), project);
   return { ...project, dir };
 }
@@ -129,19 +135,40 @@ export function cleanAgentSettings(input: AgentSettings | undefined): AgentSetti
 
 const defaultsFile = () => path.join(os.homedir(), SERVER_JSON_DIR, 'agent-defaults.json');
 
-export function getAgentDefaults(): AgentSettings {
+/** agent-defaults.json: the dev defaults at the top level, the QA reviewer's under `reviewer`. */
+function readDefaultsFile(): AgentSettings & { reviewer?: AgentSettings } {
   try {
-    return cleanAgentSettings(JSON.parse(fs.readFileSync(defaultsFile(), 'utf-8'))) ?? {};
+    return JSON.parse(fs.readFileSync(defaultsFile(), 'utf-8'));
   } catch {
     return {};
   }
 }
 
-export function saveAgentDefaults(input: AgentSettings): AgentSettings {
+export function getAgentDefaults(): AgentSettings {
+  return cleanAgentSettings(readDefaultsFile()) ?? {};
+}
+
+/** Reviewer overrides on top of the task's own settings (e.g. a stronger model for QA). */
+export function getReviewerDefaults(): AgentSettings {
+  return cleanAgentSettings(readDefaultsFile().reviewer) ?? {};
+}
+
+export function saveAgentDefaults(
+  input: AgentSettings,
+  reviewerInput?: AgentSettings,
+): { defaults: AgentSettings; reviewer: AgentSettings } {
   const defaults = cleanAgentSettings(input) ?? {};
+  const reviewer = cleanAgentSettings(reviewerInput) ?? {};
   fs.mkdirSync(path.dirname(defaultsFile()), { recursive: true });
-  writeJson(defaultsFile(), defaults);
-  return defaults;
+  writeJson(defaultsFile(), { ...defaults, reviewer });
+  return { defaults, reviewer };
+}
+
+/** Review rounds a project allows per task: a whole number 0–10 (0 turns QA off), else undefined (default). */
+function cleanReviewRounds(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 10
+    ? value
+    : undefined;
 }
 
 function writeJson(file: string, value: unknown): void {

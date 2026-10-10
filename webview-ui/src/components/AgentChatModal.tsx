@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 
 import type { ChatEntry, PermissionAsked, Task, UsageTotals } from '../../../core/src/messages.js';
+import { STAGE_CLASS, stageLabel } from '../taskStatus.js';
 import { transport } from '../transport/index.js';
+import { formatCost } from '../usageFormat.js';
 import { PendingRequests } from './PendingRequests.js';
 import { inputClass } from './ProjectRoomModal.js';
+import { ReviewHistory } from './ReviewHistory.js';
 import { Button } from './ui/Button.js';
 import { Modal } from './ui/Modal.js';
 import { UsageSummary } from './UsageSummary.js';
@@ -157,6 +160,16 @@ export function AgentChatModal({
               )}
             </span>
           )}
+          {task?.stage && (
+            <span className={`text-sm ${STAGE_CLASS[task.stage]}`}>{stageLabel(task)}</span>
+          )}
+          {task?.reviewUsage && (
+            <span className="text-xs text-text-muted">
+              QA spend: {formatCost(task.reviewUsage.costUsd)} (the totals above are the dev
+              agent&apos;s)
+            </span>
+          )}
+          {!!task?.reviews?.length && <ReviewHistory reviews={task.reviews} />}
           {!!task?.changedFiles?.length && (
             <details className="text-sm">
               <summary className="cursor-pointer text-text-muted">Changed files</summary>

@@ -7,6 +7,7 @@ import { ChatTail } from './agentChat.js';
 import { buildAgentDiagnostics } from './agentDiagnostics.js';
 import type { AgentRuntime } from './agentRuntime.js';
 import type { AgentStateStore } from './agentStateStore.js';
+import { DEV_TEAM_AREA, ensureAreaMapping } from './areaMappings.js';
 import type { LoadedAssets, LoadedCharacterSprites, LoadedPetSprites } from './assetLoader.js';
 import {
   getHooksConsent,
@@ -20,6 +21,7 @@ import { loadLayout, writeLayoutToFile } from './layoutPersistence.js';
 import {
   deleteProject,
   getAgentDefaults,
+  getReviewerDefaults,
   listProjects,
   saveAgentDefaults,
   saveProject,
@@ -86,8 +88,6 @@ const KEY_GHOST_HEADLESS_AGENTS = 'pixel-agents.ghostHeadlessAgents';
 const KEY_WATCH_ALL_SESSIONS = 'pixel-agents.watchAllSessions';
 const KEY_HOOKS_INFO_SHOWN = 'pixel-agents.hooksInfoShown';
 const KEY_SHOW_AREAS = 'pixel-agents.showAreas';
-/** Area label in the bundled default layout where project agents sit. */
-const DEV_TEAM_AREA = 'Dev Team';
 
 /**
  * Handle incoming ClientMessage from a WebSocket client.
@@ -401,6 +401,8 @@ interface ChatTarget {
   key: string;
   agentId?: number;
   task?: Task;
+  /** The chat is a QA agent's: linked to its task, never messageable. */
+  reviewer?: boolean;
   file?: string;
 }
 
@@ -412,11 +414,20 @@ function chatTarget(ctx: ClientMessageContext, msg: Record<string, unknown>): Ch
   const agentId = Number(msg.id);
   const agent = ctx.store.get(agentId);
   const task = agent ? ctx.tasks?.taskForSession(agent.sessionId) : undefined;
-  return { key: `agent:${agentId}`, agentId, task, file: agent?.jsonlFile || undefined };
+  // A QA agent's chat links to the task it reviewed, read-only: messages go to devs, not reviewers.
+  const reviewed = agent && !task ? ctx.tasks?.taskForReviewSession(agent.sessionId) : undefined;
+  return {
+    key: `agent:${agentId}`,
+    agentId,
+    task: task ?? reviewed,
+    reviewer: !!reviewed,
+    file: agent?.jsonlFile || undefined,
+  };
 }
 
 function taskIdFor(ctx: ClientMessageContext, msg: Record<string, unknown>): string {
-  const taskId = chatTarget(ctx, msg).task?.id;
+  const target = chatTarget(ctx, msg);
+  const taskId = target.reviewer ? undefined : target.task?.id;
   if (!taskId) throw new Error('Only agents started as tasks can be messaged or interrupted');
   return taskId;
 }
@@ -438,13 +449,7 @@ function handleTaskMessage(
         store.broadcast({ type: 'projectsLoaded', projects: listProjects() });
         // Agents are labelled with their project name, so this seats them in the dev room
         // unless the user already mapped the project to other Areas.
-        const cfg = readConfig();
-        const mappings = (cfg.standalone.areaMappings ??= {});
-        if (!mappings[saved.name]) {
-          mappings[saved.name] = [DEV_TEAM_AREA];
-          writeConfig(cfg);
-          store.broadcast({ type: 'areaMappingsLoaded', mappings });
-        }
+        ensureAreaMapping(saved.name, DEV_TEAM_AREA, (m) => store.broadcast(m));
         break;
       }
       case 'deleteProject':
@@ -464,7 +469,7 @@ function handleTaskMessage(
       case 'saveAgentDefaults':
         store.broadcast({
           type: 'agentDefaultsLoaded',
-          defaults: saveAgentDefaults(msg.defaults as AgentSettings),
+          ...saveAgentDefaults(msg.defaults as AgentSettings, msg.reviewer as AgentSettings),
         });
         break;
       case 'watchAgentChat': {
@@ -474,7 +479,7 @@ function handleTaskMessage(
           type: 'agentChat',
           id: target.agentId,
           taskId: target.task?.id,
-          controllable: !!target.task && tasks.canMessage(target.task),
+          controllable: !!target.task && !target.reviewer && tasks.canMessage(target.task),
         });
         if (!target.file) {
           send({ ...reply(), entries: [], reset: true });
@@ -625,7 +630,11 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
   if (ctx.tasks && ctx.privileged) {
     send({ type: 'projectsLoaded', projects: listProjects() });
     send({ type: 'tasksLoaded', tasks: ctx.tasks.list() });
-    send({ type: 'agentDefaultsLoaded', defaults: getAgentDefaults() });
+    send({
+      type: 'agentDefaultsLoaded',
+      defaults: getAgentDefaults(),
+      reviewer: getReviewerDefaults(),
+    });
     for (const asked of ctx.tasks.pendingPermissions()) send(asked);
   }
 

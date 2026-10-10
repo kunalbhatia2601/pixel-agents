@@ -9,11 +9,13 @@ import {
   FURNITURE_ANIM_INTERVAL_SEC,
   GREETER_ID,
   GREETER_TILE_MARGIN,
+  IDLE_VANISH_SEC,
   INACTIVE_SEAT_TIMER_MIN_SEC,
   INACTIVE_SEAT_TIMER_RANGE_SEC,
   MAX_PET_ID_LENGTH,
   PET_HIT_HALF_WIDTH,
   PET_HIT_HEIGHT,
+  RESERVED_AREAS,
   WAITING_BUBBLE_DURATION_SEC,
 } from '../../constants.js';
 import { getAnimationFrames, getCatalogEntry, getOnStateType } from '../layout/furnitureCatalog.js';
@@ -41,7 +43,7 @@ import { CharacterState, Direction, PetState, TILE_SIZE } from '../types.js';
 import { createCharacter, updateCharacter } from './characters.js';
 import { advanceMatrixEffect, startMatrixEffect } from './matrixEffectState.js';
 import { createPet, updatePet } from './petEntity.js';
-import { anchorTile, closestFreeSeat } from './seatPlacement.js';
+import { anchorTile, closestFreeSeat, seatStages } from './seatPlacement.js';
 
 /** Internal helper: facing-tile coords for a seat. Returns null for invalid direction. */
 function seatFacingOffset(direction: Direction): { dCol: number; dRow: number } {
@@ -156,8 +158,12 @@ export class OfficeState {
       seat.assigned = false;
     }
 
-    // First pass: try to keep characters at their existing seats
+    // First pass: try to keep characters at their existing seats (only working ones sit)
     for (const ch of this.characters.values()) {
+      if (!ch.isActive && !ch.isSubagent) {
+        ch.seatId = null;
+        continue;
+      }
       if (ch.seatId && this.seats.has(ch.seatId)) {
         const seat = this.seats.get(ch.seatId)!;
         if (!seat.assigned) {
@@ -176,9 +182,9 @@ export class OfficeState {
       ch.seatId = null; // will be reassigned below
     }
 
-    // Second pass: assign remaining characters to free seats
+    // Second pass: assign remaining working characters to free seats
     for (const ch of this.characters.values()) {
-      if (ch.seatId) continue;
+      if (ch.seatId || !ch.isActive) continue;
       const seatId = this.findFreeSeat(ch.folderName);
       if (seatId) {
         this.seats.get(seatId)!.assigned = true;
@@ -365,26 +371,17 @@ export class OfficeState {
     }
     if (freeSeats.length === 0) return null;
 
-    const areaLabels = folderName ? this.areaMappings[folderName] : undefined;
-
-    // Stage 1 — in-area seats for the folder's mapped Area labels.
-    if (areaLabels && areaLabels.length > 0) {
-      const wanted = new Set(areaLabels);
-      const inArea = freeSeats.filter((uid) => {
-        const label = this.seatZone(uid);
-        return label !== null && wanted.has(label);
-      });
-      const pick = this.pickFromSeats(inArea, electronicsTiles);
+    const stages = seatStages(
+      freeSeats,
+      (uid) => this.seatZone(uid),
+      folderName ? this.areaMappings[folderName] : undefined,
+      new Set([...RESERVED_AREAS, ...Object.values(this.areaMappings).flat()]),
+    );
+    for (const stage of stages) {
+      const pick = this.pickFromSeats(stage, electronicsTiles);
       if (pick) return pick;
     }
-
-    // Stage 2 — unzoned seats (no area label, or layout has no areas at all).
-    const unzoned = freeSeats.filter((uid) => this.seatZone(uid) === null);
-    const pick2 = this.pickFromSeats(unzoned, electronicsTiles);
-    if (pick2) return pick2;
-
-    // Stage 3 — any free seat.
-    return this.pickFromSeats(freeSeats, electronicsTiles);
+    return null;
   }
 
   /** Closest walkable tile to (col,row) not occupied by another character, or null. */
@@ -464,26 +461,27 @@ export class OfficeState {
       seatId = this.findFreeSeat(folderName);
     }
 
-    let ch: Character;
-    if (seatId) {
-      const seat = this.seats.get(seatId)!;
-      seat.assigned = true;
-      ch = createCharacter(id, palette, seatId, seat, hueShift);
-    } else {
-      // No seats — teammates spawn beside their anchor, others at a random walkable tile
-      let spawn = anchorAt ? this.closestFreeWalkableTile(anchorAt.col, anchorAt.row) : null;
-      if (!spawn) {
-        spawn =
-          this.walkableTiles.length > 0
-            ? this.walkableTiles[Math.floor(Math.random() * this.walkableTiles.length)]
-            : { col: 1, row: 1 };
-      }
-      ch = createCharacter(id, palette, null, null, hueShift);
-      ch.x = spawn.col * TILE_SIZE + TILE_SIZE / 2;
-      ch.y = spawn.row * TILE_SIZE + TILE_SIZE / 2;
-      ch.tileCol = spawn.col;
-      ch.tileRow = spawn.row;
+    // Agents sit only while working: a new character stands idle beside the seat it would take
+    // (so it appears in its own room) and claims a seat when activity arrives (setAgentActive).
+    const near = seatId ? this.seats.get(seatId)! : null;
+    let spawn = near
+      ? this.closestFreeWalkableTile(near.seatCol, near.seatRow)
+      : anchorAt
+        ? this.closestFreeWalkableTile(anchorAt.col, anchorAt.row)
+        : null;
+    if (!spawn) {
+      spawn =
+        this.walkableTiles.length > 0
+          ? this.walkableTiles[Math.floor(Math.random() * this.walkableTiles.length)]
+          : { col: 1, row: 1 };
     }
+    const ch: Character = createCharacter(id, palette, null, null, hueShift);
+    ch.x = spawn.col * TILE_SIZE + TILE_SIZE / 2;
+    ch.y = spawn.row * TILE_SIZE + TILE_SIZE / 2;
+    ch.tileCol = spawn.col;
+    ch.tileRow = spawn.row;
+    ch.isActive = false;
+    ch.state = CharacterState.IDLE;
 
     if (folderName) {
       ch.folderName = folderName;
@@ -553,6 +551,13 @@ export class OfficeState {
   removeAgent(id: number): void {
     const ch = this.characters.get(id);
     if (!ch) return;
+    // Closed for good while hidden: nothing to animate, just forget it.
+    if (ch.dormant) {
+      this.characters.delete(id);
+      return;
+    }
+    // Closed while idling out: let the despawn finish and delete instead of going dormant.
+    ch.vanishing = false;
     if (ch.matrixEffect === 'despawn') return; // already despawning
     // Free seat and clear selection immediately
     if (ch.seatId) {
@@ -791,7 +796,22 @@ export class OfficeState {
   setAgentActive(id: number, active: boolean): void {
     const ch = this.characters.get(id);
     if (ch) {
+      if (active) this.wake(ch);
       ch.isActive = active;
+      // Agents sit only while working: claim a seat in their room on activity, give it back on idle.
+      if (!ch.isSubagent) {
+        if (active && !ch.seatId) {
+          const seatId = this.findFreeSeat(ch.folderName);
+          if (seatId) {
+            this.seats.get(seatId)!.assigned = true;
+            ch.seatId = seatId;
+          }
+        } else if (!active && ch.seatId) {
+          const seat = this.seats.get(ch.seatId);
+          if (seat) seat.assigned = false;
+          ch.seatId = null;
+        }
+      }
       if (!active) {
         // Sentinel -1: signals turn just ended, skip next seat rest timer.
         // Prevents the WALK handler from setting a 2-4 min rest on arrival.
@@ -871,6 +891,32 @@ export class OfficeState {
     this.furniture = layoutToFurnitureInstances(modifiedFurniture);
   }
 
+  /** Idled out: hidden, seatless, but kept — its id, palette, label and task link all survive. */
+  private goDormant(ch: Character): void {
+    ch.dormant = true;
+    ch.vanishing = false;
+    ch.matrixEffect = null;
+    ch.matrixEffectTimer = 0;
+    ch.matrixEffectSeeds = [];
+    ch.bubbleType = null;
+    ch.path = [];
+    if (this.selectedAgentId === ch.id) this.selectedAgentId = null;
+    if (this.cameraFollowId === ch.id) this.cameraFollowId = null;
+  }
+
+  /** Back from dormant (or from vanishing mid-effect) where it stood; activity then seats it. */
+  private wake(ch: Character): void {
+    ch.idleTime = 0;
+    if (ch.vanishing) {
+      ch.vanishing = false;
+      startMatrixEffect(ch, 'spawn');
+    }
+    if (!ch.dormant) return;
+    ch.dormant = false;
+    ch.state = CharacterState.IDLE;
+    startMatrixEffect(ch, 'spawn');
+  }
+
   setAgentTool(id: number, tool: string | null): void {
     const ch = this.characters.get(id);
     if (ch) {
@@ -881,6 +927,7 @@ export class OfficeState {
   showPermissionBubble(id: number): void {
     const ch = this.characters.get(id);
     if (ch) {
+      this.wake(ch); // needs the owner: show it even if it had idled out
       ch.bubbleType = 'permission';
       ch.bubbleTimer = 0;
     }
@@ -1103,10 +1150,26 @@ export class OfficeState {
 
     const toDelete: number[] = [];
     for (const ch of this.characters.values()) {
+      if (ch.dormant) continue; // hidden until its agent does something again
       const effect = advanceMatrixEffect(ch, dt);
       if (effect !== 'none') {
-        if (effect === 'despawned') toDelete.push(ch.id);
+        if (effect === 'despawned') {
+          if (ch.vanishing) this.goDormant(ch);
+          else toDelete.push(ch.id);
+        }
         continue; // skip normal FSM while the effect is (or just was) active
+      }
+
+      // Long idle: fade out of the office. Waiting on the owner's approval is not idle.
+      if (!ch.isSubagent && !ch.isActive && ch.bubbleType !== 'permission') {
+        ch.idleTime = (ch.idleTime ?? 0) + dt;
+        if (ch.idleTime >= IDLE_VANISH_SEC) {
+          ch.vanishing = true;
+          startMatrixEffect(ch, 'despawn');
+          continue;
+        }
+      } else {
+        ch.idleTime = 0;
       }
 
       // Temporarily unblock own seat so character can pathfind to it
@@ -1163,7 +1226,7 @@ export class OfficeState {
    *  is up, the consent greeter. This is the ONE place the greeter joins the
    *  agents — every other consumer reads `characters` and gets agents only. */
   getCharacters(): Character[] {
-    const chars = Array.from(this.characters.values());
+    const chars = Array.from(this.characters.values()).filter((ch) => !ch.dormant);
     if (this.greeter) chars.push(this.greeter);
     return chars;
   }
@@ -1174,8 +1237,8 @@ export class OfficeState {
   getCharacterAt(worldX: number, worldY: number): number | null {
     const chars = Array.from(this.characters.values()).sort((a, b) => b.y - a.y);
     for (const ch of chars) {
-      // Skip characters that are despawning
-      if (ch.matrixEffect === 'despawn') continue;
+      // Skip characters that are despawning or dormant
+      if (ch.matrixEffect === 'despawn' || ch.dormant) continue;
       // Character sprite is 16x24, anchored bottom-center
       // Apply sitting offset to match visual position
       const sittingOffset = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0;

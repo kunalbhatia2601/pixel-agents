@@ -31,6 +31,21 @@ export function usageFromModelUsage(
   return totals;
 }
 
+/** Sum of two totals (separate queries, e.g. successive QA reviews); cost stays unknown only if both are. */
+export function addUsage(a: UsageTotals | undefined, b: UsageTotals): UsageTotals {
+  if (!a) return b;
+  return {
+    costUsd:
+      a.costUsd === undefined && b.costUsd === undefined
+        ? undefined
+        : (a.costUsd ?? 0) + (b.costUsd ?? 0),
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    cacheReadTokens: a.cacheReadTokens + b.cacheReadTokens,
+    cacheWriteTokens: a.cacheWriteTokens + b.cacheWriteTokens,
+  };
+}
+
 /** `git diff --numstat` output → files, prefixed with the repo folder for multi-repo tasks. */
 export function parseNumstat(output: string, prefix = ''): ChangedFile[] {
   return output
